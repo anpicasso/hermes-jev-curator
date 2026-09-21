@@ -70,8 +70,40 @@
     h2 { margin: 0; font-size: clamp(24px, 3vw, 34px); letter-spacing: -.025em; }
     .section-head p { margin: 0; color: var(--muted); text-align: right; }
     .panel { border: 1px solid var(--line); border-radius: 22px; background: rgba(14,21,40,.94); box-shadow: var(--shadow); overflow: hidden; }
-    .diagram-wrap { overflow-x: auto; padding: 18px; }
-    svg { display: block; width: 100%; min-width: 1180px; height: auto; }
+    .diagram-wrap { padding: 18px; }
+    .diagram-help { margin: 0; padding: 0 20px 14px; color: var(--muted); font-size: 13px; }
+    .arch-map { display: grid; grid-template-columns: minmax(210px,.8fr) minmax(440px,2.2fr) minmax(210px,.8fr); gap: 14px; align-items: start; }
+    .arch-zone { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2); }
+    .arch-zone header { margin-bottom: 12px; }
+    .arch-zone h3 { margin: 0; font-size: 16px; letter-spacing: .06em; text-transform: uppercase; }
+    .arch-zone header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .arch-zone h4 { margin: 18px 0 9px; color: var(--muted); font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+    .arch-entry { grid-column: 1; grid-row: 1; border-color: #356a94; background: #0d2740; }
+    .arch-entry h3 { color: var(--blue); }
+    .arch-plugin { grid-column: 2; grid-row: 1 / span 2; border-color: #6859a8; background: #18152e; }
+    .arch-plugin h3 { color: var(--violet); }
+    .arch-hosts { grid-column: 3; grid-row: 1; border-color: #8b6137; background: #362416; }
+    .arch-hosts h3 { color: var(--orange); }
+    .arch-core { grid-column: 1; grid-row: 2; border-color: #36796e; background: #11322f; }
+    .arch-core h3 { color: var(--teal); }
+    .arch-state { grid-column: 3; grid-row: 2; border-color: #3f805f; background: #173428; }
+    .arch-state h3 { color: var(--green); }
+    .arch-list, .arch-flow { margin: 0; padding: 0; list-style: none; }
+    .arch-list { display: grid; gap: 9px; }
+    .arch-node { min-width: 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 11px; background: rgba(14,21,40,.72); overflow-wrap: anywhere; }
+    .arch-node strong, .arch-node small { display: block; }
+    .arch-node strong { font-size: 14px; }
+    .arch-node small { margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .arch-controls, .arch-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 9px; }
+    .arch-flow { display: grid; gap: 19px; counter-reset: pipeline; }
+    .arch-flow .arch-node { position: relative; padding-left: 48px; counter-increment: pipeline; }
+    .arch-flow .arch-node::before { content: counter(pipeline); position: absolute; left: 12px; top: 50%; width: 25px; height: 25px; border-radius: 999px; display: grid; place-items: center; transform: translateY(-50%); color: #18152e; background: var(--violet); font-size: 13px; font-weight: 900; }
+    .arch-flow .arch-node:not(:last-child)::after { content: "↓"; position: absolute; left: 50%; bottom: -20px; color: var(--violet); font-size: 16px; line-height: 18px; }
+    .arch-actions .guard { border-color: #8b4e57; background: var(--red-fill); }
+    .arch-actions .apply { border-color: #3f805f; background: var(--green-fill); }
+    .arch-actions .persist { border-color: #36796e; background: var(--teal-fill); }
+    .arch-gates { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 7px 14px; margin: 0; padding: 12px 12px 12px 30px; border: 1px solid #7181ae; border-radius: 12px; background: #202744; color: #c9d3e7; font-size: 12px; }
+    .arch-link { margin: 10px 0 0; padding: 8px 10px; border-radius: 9px; color: var(--ink); background: rgba(7,11,22,.45); font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
     .legend { display: flex; flex-wrap: wrap; gap: 14px 22px; padding: 14px 20px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
     .legend span { display: inline-flex; align-items: center; gap: 8px; }
     .dot { width: 12px; height: 12px; border-radius: 4px; display: inline-block; }
@@ -113,12 +145,15 @@
       .invariants, .evidence { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .section-head { display: block; }
       .section-head p { margin-top: 5px; text-align: left; }
+      .arch-map { grid-template-columns: 1fr; }
+      .arch-entry, .arch-plugin, .arch-hosts, .arch-core, .arch-state { grid-column: 1; grid-row: auto; }
     }
     @media (max-width: 600px) {
       .page { width: min(100% - 18px, 1500px); padding-top: 9px; }
       .hero { padding: 22px; border-radius: 18px; }
       .seam { grid-template-columns: 1fr; }
       .invariants, .evidence { grid-template-columns: 1fr; }
+      .arch-controls, .arch-actions, .arch-gates { grid-template-columns: 1fr; }
     }
     @media print {
       :root { color-scheme: light; --bg:#fff; --panel:#fff; --panel-2:#f6f8fc; --ink:#111827; --muted:#46536b; --line:#cbd5e1; }
@@ -135,7 +170,7 @@
     <div>
       <p class="eyebrow">Hermes Agent standalone plugin · v0.1.0</p>
       <h1>hermes-<span>jev-curator</span></h1>
-      <p class="lede">A typed semantic-governance layer around Hermes Curator: deterministic candidates, Jev relation judgments, direct-edge plans, an offline mutation guard, and an explicitly gated archive-only apply path. Hermes keeps ownership of skills, snapshots, provenance, and the mutation ledger.</p>
+      <p class="lede">A typed semantic-governance layer around Hermes Curator: deterministic candidates, byte-and-token-bounded whole/chunk planning, fail-closed aggregation, direct-edge plans, an offline mutation guard, and an explicitly gated archive-only apply path. Hermes keeps ownership of skills, snapshots, provenance, and the mutation ledger.</p>
       <nav aria-label="Page sections">
         <a href="#system">System map</a>
         <a href="#integrations">Hermes seams</a>
@@ -157,205 +192,106 @@
     </div>
     <div class="panel">
       <div class="diagram-wrap">
-        <svg viewBox="0 0 1600 1040" role="img" aria-labelledby="archTitle archDesc">
-          <title id="archTitle">hermes-jev-curator system architecture</title>
-          <desc id="archDesc">Hermes surfaces feed a standalone curator plugin. The plugin inventories skills, generates candidates, optionally requests typed Jev decisions, builds hash-bound plans, and either observes, guards background writes, or archives through Hermes core after safety gates.</desc>
-          <defs>
-            <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#74c0fc"/></marker>
-            <marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b197fc"/></marker>
-            <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#63e6be"/></marker>
-            <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ffc078"/></marker>
-            <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="7" stdDeviation="8" flood-color="#000" flood-opacity=".25"/></filter>
-          </defs>
+        <div class="arch-map" role="group" aria-label="hermes-jev-curator system architecture">
+          <aside class="arch-zone arch-entry">
+            <header>
+              <h3>Hermes entry surfaces</h3>
+              <p>Host-owned invocation and configuration</p>
+            </header>
+            <ul class="arch-list">
+              <li class="arch-node"><strong>Plugin manager + PluginContext</strong><small>discover · load · register · unload</small></li>
+              <li class="arch-node"><strong>Curator fork</strong><small>platform=curator · skills toolset</small></li>
+              <li class="arch-node"><strong>CLI + /jev-curator</strong><small>terminal command and dry-only chat command</small></li>
+              <li class="arch-node"><strong>Host config</strong><small>settings are re-read on every call</small></li>
+            </ul>
+            <p class="arch-link">→ registration, service, and settings boundary</p>
+          </aside>
 
-          <!-- Zones -->
-          <rect x="25" y="45" width="330" height="430" rx="24" fill="#0d2740" stroke="#356a94" stroke-width="2"/>
-          <text x="50" y="82" fill="#74c0fc" font-size="22" font-weight="800">HERMES ENTRY SURFACES</text>
-          <text x="50" y="107" fill="#aab6ce" font-size="14">Host-owned invocation and configuration</text>
+          <section class="arch-zone arch-plugin">
+            <header>
+              <h3>Jev-curator plugin boundary</h3>
+              <p>Standalone · standard library only · no core edits</p>
+            </header>
+            <div class="arch-controls">
+              <div class="arch-node"><strong>Registration facade</strong><small>tool · prompt · hooks · commands</small></div>
+              <div class="arch-node"><strong>Commands + service</strong><small>status · scan · graph · plan · run</small></div>
+              <div class="arch-node"><strong>Settings boundary</strong><small>off · observe · guard · apply</small></div>
+            </div>
 
-          <rect x="390" y="45" width="820" height="925" rx="24" fill="#18152e" stroke="#6859a8" stroke-width="2"/>
-          <text x="420" y="82" fill="#b197fc" font-size="22" font-weight="800">JEV-CURATOR PLUGIN BOUNDARY</text>
-          <text x="420" y="107" fill="#aab6ce" font-size="14">Standalone · standard library only · no core edits</text>
+            <h4>Read → judge → certify</h4>
+            <ol class="arch-flow">
+              <li class="arch-node"><strong>Inventory</strong><small>Read bounded packages; bind SHA-256 digests and core-derived protection reasons.</small></li>
+              <li class="arch-node"><strong>Deterministic candidates</strong><small>Generate stable lexical top-k pairs; similarity proposes but never authorizes.</small></li>
+              <li class="arch-node"><strong>Whole/chunk planner</strong><small>Use one whole request under 160,000 serialized bytes and 24,000 estimated tokens; otherwise plan each direction whose containing side fits whole.</small></li>
+              <li class="arch-node"><strong>Egress + typed transport</strong><small>Require consent, redact once, send bounded HTTPS state, and validate every requested answer.</small></li>
+              <li class="arch-node"><strong>Fail-closed aggregator</strong><small>Require complete chunk sets; minimum preservation/coverage, maximum conflict, zero for unmeasured directions.</small></li>
+              <li class="arch-node"><strong>Direct-edge graph</strong><small>Build hash-bound edges with no transitive authorization.</small></li>
+              <li class="arch-node"><strong>Merge plans</strong><small>Create star-shaped plans from direct evidence only.</small></li>
+            </ol>
 
-          <rect x="1245" y="45" width="330" height="430" rx="24" fill="#362416" stroke="#8b6137" stroke-width="2"/>
-          <text x="1270" y="82" fill="#ffc078" font-size="22" font-weight="800">JEV DECISION HOSTS</text>
-          <text x="1270" y="107" fill="#aab6ce" font-size="14">Third-party boundary; consent required</text>
+            <h4>Operational outputs</h4>
+            <div class="arch-actions">
+              <div class="arch-node guard"><strong>Offline mutation guard</strong><small>pre_tool_call · exact hash-bound absorption only</small></div>
+              <div class="arch-node apply"><strong>Apply engine</strong><small>terminal-only · snapshot-first · archive-only</small></div>
+              <div class="arch-node persist"><strong>Durable evidence</strong><small>cache · skips · audit · reports · guard plans</small></div>
+            </div>
 
-          <rect x="25" y="510" width="330" height="460" rx="24" fill="#11322f" stroke="#36796e" stroke-width="2"/>
-          <text x="50" y="547" fill="#63e6be" font-size="22" font-weight="800">HERMES CORE SERVICES</text>
-          <text x="50" y="572" fill="#aab6ce" font-size="14">Source of truth for skills and mutations</text>
+            <h4>Apply safety gates</h4>
+            <ol class="arch-gates">
+              <li>mode=apply + terminal --apply</li>
+              <li>complete direct edges; no overlap or chain</li>
+              <li>write approval off; fresh digests and names</li>
+              <li>pre-apply snapshot succeeds</li>
+              <li>skill_manage dispatch uses background_review</li>
+              <li>_archived confirmed; post-write state verified</li>
+            </ol>
+          </section>
 
-          <rect x="1245" y="510" width="330" height="460" rx="24" fill="#173428" stroke="#3f805f" stroke-width="2"/>
-          <text x="1270" y="547" fill="#8ce99a" font-size="22" font-weight="800">PROFILE-LOCAL STATE</text>
-          <text x="1270" y="572" fill="#aab6ce" font-size="14">$HERMES_HOME/jev-curator · 0600 files</text>
+          <aside class="arch-zone arch-hosts">
+            <header>
+              <h3>Jev decision hosts</h3>
+              <p>Third-party boundary; explicit consent required</p>
+            </header>
+            <p class="arch-link">← redacted, serialized-byte + estimated-token bounded HTTPS POST</p>
+            <ul class="arch-list">
+              <li class="arch-node"><strong>TypeSafe Jev</strong><small>/v1/systemone</small></li>
+              <li class="arch-node"><strong>OpenRouter decisions</strong><small>/api/alpha/decisions</small></li>
+              <li class="arch-node"><strong>Custom Jev HTTPS</strong><small>explicit URL + explicit key only</small></li>
+              <li class="arch-node"><strong>Credential boundary</strong><small>matching-host credentials only</small></li>
+            </ul>
+          </aside>
 
-          <!-- Hermes surfaces -->
-          <g filter="url(#shadow)">
-            <rect x="50" y="135" width="280" height="72" rx="15" fill="#153454" stroke="#74c0fc"/>
-            <text x="190" y="165" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">Plugin manager + PluginContext</text>
-            <text x="190" y="188" text-anchor="middle" fill="#aab6ce" font-size="14">discover · load · register · unload</text>
+          <aside class="arch-zone arch-core">
+            <header>
+              <h3>Hermes core services</h3>
+              <p>Source of truth for skills and mutations</p>
+            </header>
+            <p class="arch-link">→ read-only inventory · ← snapshot and ledgered archive</p>
+            <ul class="arch-list">
+              <li class="arch-node"><strong>skills/ packages</strong><small>frontmatter + files</small></li>
+              <li class="arch-node"><strong>skill_usage + provenance</strong><small>eligibility · managed state · origin</small></li>
+              <li class="arch-node"><strong>Curator snapshot</strong><small>restore point before mutation</small></li>
+              <li class="arch-node"><strong>skill_manage + ledger</strong><small>recoverable move to .archive/</small></li>
+            </ul>
+          </aside>
 
-            <rect x="50" y="230" width="280" height="72" rx="15" fill="#153454" stroke="#74c0fc"/>
-            <text x="190" y="260" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">Curator fork</text>
-            <text x="190" y="283" text-anchor="middle" fill="#aab6ce" font-size="14">platform = curator · skills toolset</text>
-
-            <rect x="50" y="325" width="280" height="60" rx="15" fill="#153454" stroke="#74c0fc"/>
-            <text x="190" y="361" text-anchor="middle" fill="#edf3ff" font-size="17" font-weight="700">CLI + /jev-curator</text>
-
-            <rect x="50" y="408" width="280" height="44" rx="13" fill="#153454" stroke="#74c0fc"/>
-            <text x="190" y="436" text-anchor="middle" fill="#edf3ff" font-size="16" font-weight="700">Host config · re-read per call</text>
-          </g>
-
-          <!-- Plugin components -->
-          <g filter="url(#shadow)">
-            <rect x="430" y="130" width="225" height="78" rx="16" fill="#31255b" stroke="#b197fc"/>
-            <text x="542" y="160" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">Registration facade</text>
-            <text x="542" y="184" text-anchor="middle" fill="#cfc5f5" font-size="14">tool · prompt · hooks · commands</text>
-
-            <rect x="695" y="130" width="225" height="78" rx="16" fill="#31255b" stroke="#b197fc"/>
-            <text x="807" y="160" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">Commands + service</text>
-            <text x="807" y="184" text-anchor="middle" fill="#cfc5f5" font-size="14">status · scan · graph · plan · run</text>
-
-            <rect x="960" y="130" width="210" height="78" rx="16" fill="#31255b" stroke="#b197fc"/>
-            <text x="1065" y="160" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">Settings boundary</text>
-            <text x="1065" y="184" text-anchor="middle" fill="#cfc5f5" font-size="14">off · observe · guard · apply</text>
-
-            <rect x="430" y="270" width="210" height="82" rx="16" fill="#31255b" stroke="#b197fc"/>
-            <text x="535" y="302" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">1 · Inventory</text>
-            <text x="535" y="326" text-anchor="middle" fill="#cfc5f5" font-size="14">bounded text + SHA-256 + protection</text>
-
-            <rect x="690" y="270" width="210" height="82" rx="16" fill="#31255b" stroke="#b197fc"/>
-            <text x="795" y="302" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">2 · Candidates</text>
-            <text x="795" y="326" text-anchor="middle" fill="#cfc5f5" font-size="14">deterministic lexical top-k pairs</text>
-
-            <rect x="950" y="270" width="220" height="82" rx="16" fill="#42391b" stroke="#ffe066"/>
-            <text x="1060" y="300" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">3 · Egress gate</text>
-            <text x="1060" y="325" text-anchor="middle" fill="#e8dda3" font-size="14">mode ≠ off + explicit content consent</text>
-
-            <rect x="950" y="410" width="220" height="86" rx="16" fill="#4a301c" stroke="#ffc078"/>
-            <text x="1060" y="441" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">Transport + validator</text>
-            <text x="1060" y="466" text-anchor="middle" fill="#f4c99d" font-size="14">redact · bound · HTTPS · typed parse</text>
-
-            <rect x="690" y="410" width="210" height="86" rx="16" fill="#31255b" stroke="#b197fc"/>
-            <text x="795" y="441" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">4 · Judgments</text>
-            <text x="795" y="466" text-anchor="middle" fill="#cfc5f5" font-size="14">8 relations + coverage + preservation</text>
-
-            <rect x="430" y="410" width="210" height="86" rx="16" fill="#31255b" stroke="#b197fc"/>
-            <text x="535" y="441" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">5 · Direct-edge graph</text>
-            <text x="535" y="466" text-anchor="middle" fill="#cfc5f5" font-size="14">hash-bound edges · no transitivity</text>
-
-            <rect x="430" y="575" width="220" height="88" rx="16" fill="#31255b" stroke="#b197fc"/>
-            <text x="540" y="607" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">6 · Merge plans</text>
-            <text x="540" y="632" text-anchor="middle" fill="#cfc5f5" font-size="14">star-shaped · direct evidence only</text>
-
-            <rect x="705" y="575" width="220" height="88" rx="16" fill="#4a242b" stroke="#ffa8a8"/>
-            <text x="815" y="607" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">Offline mutation guard</text>
-            <text x="815" y="632" text-anchor="middle" fill="#f4c0c0" font-size="14">pre_tool_call · exact absorption only</text>
-
-            <rect x="980" y="575" width="190" height="88" rx="16" fill="#183d2b" stroke="#8ce99a"/>
-            <text x="1075" y="607" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">Apply engine</text>
-            <text x="1075" y="632" text-anchor="middle" fill="#bdeec5" font-size="14">terminal-only · archive-only</text>
-
-            <rect x="430" y="735" width="740" height="170" rx="20" fill="#202744" stroke="#7181ae"/>
-            <text x="460" y="771" fill="#edf3ff" font-size="19" font-weight="800">APPLY SAFETY GATES</text>
-            <text x="460" y="805" fill="#c9d3e7" font-size="15">1. mode=apply + terminal --apply</text>
-            <text x="460" y="833" fill="#c9d3e7" font-size="15">2. complete direct-edge evidence + no overlap/chain</text>
-            <text x="460" y="861" fill="#c9d3e7" font-size="15">3. write approval off + fresh digests + unprotected names</text>
-            <text x="810" y="805" fill="#c9d3e7" font-size="15">4. pre-apply snapshot succeeds</text>
-            <text x="810" y="833" fill="#c9d3e7" font-size="15">5. dispatch through skill_manage as background_review</text>
-            <text x="810" y="861" fill="#c9d3e7" font-size="15">6. _archived confirmed + post-write verification</text>
-          </g>
-
-          <!-- External hosts -->
-          <g filter="url(#shadow)">
-            <rect x="1270" y="135" width="280" height="70" rx="15" fill="#4a301c" stroke="#ffc078"/>
-            <text x="1410" y="165" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">TypeSafe Jev</text>
-            <text x="1410" y="188" text-anchor="middle" fill="#f4c99d" font-size="14">/v1/systemone</text>
-
-            <rect x="1270" y="228" width="280" height="70" rx="15" fill="#4a301c" stroke="#ffc078"/>
-            <text x="1410" y="258" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">OpenRouter decisions</text>
-            <text x="1410" y="281" text-anchor="middle" fill="#f4c99d" font-size="14">/api/alpha/decisions</text>
-
-            <rect x="1270" y="321" width="280" height="70" rx="15" fill="#4a301c" stroke="#ffc078"/>
-            <text x="1410" y="351" text-anchor="middle" fill="#edf3ff" font-size="18" font-weight="700">Custom Jev HTTPS</text>
-            <text x="1410" y="374" text-anchor="middle" fill="#f4c99d" font-size="14">explicit URL + explicit key only</text>
-
-            <rect x="1270" y="414" width="280" height="38" rx="12" fill="#42391b" stroke="#ffe066"/>
-            <text x="1410" y="439" text-anchor="middle" fill="#edf3ff" font-size="14" font-weight="700">matching-host credentials only</text>
-          </g>
-
-          <!-- Core services -->
-          <g filter="url(#shadow)">
-            <rect x="50" y="610" width="280" height="62" rx="15" fill="#153b38" stroke="#63e6be"/>
-            <text x="190" y="639" text-anchor="middle" fill="#edf3ff" font-size="17" font-weight="700">skills/ packages</text>
-            <text x="190" y="660" text-anchor="middle" fill="#b9e9df" font-size="14">frontmatter + files</text>
-
-            <rect x="50" y="696" width="280" height="62" rx="15" fill="#153b38" stroke="#63e6be"/>
-            <text x="190" y="725" text-anchor="middle" fill="#edf3ff" font-size="17" font-weight="700">skill_usage + provenance</text>
-            <text x="190" y="746" text-anchor="middle" fill="#b9e9df" font-size="14">eligibility · managed state · origin</text>
-
-            <rect x="50" y="782" width="280" height="62" rx="15" fill="#153b38" stroke="#63e6be"/>
-            <text x="190" y="811" text-anchor="middle" fill="#edf3ff" font-size="17" font-weight="700">curator snapshot</text>
-            <text x="190" y="832" text-anchor="middle" fill="#b9e9df" font-size="14">restore point before mutation</text>
-
-            <rect x="50" y="868" width="280" height="74" rx="15" fill="#183d2b" stroke="#8ce99a"/>
-            <text x="190" y="899" text-anchor="middle" fill="#edf3ff" font-size="17" font-weight="700">skill_manage + ledger</text>
-            <text x="190" y="922" text-anchor="middle" fill="#bdeec5" font-size="14">recoverable move to .archive/</text>
-          </g>
-
-          <!-- State -->
-          <g filter="url(#shadow)">
-            <rect x="1270" y="610" width="280" height="52" rx="14" fill="#183d2b" stroke="#8ce99a"/>
-            <text x="1410" y="642" text-anchor="middle" fill="#edf3ff" font-size="16" font-weight="700">relations.json · content cache</text>
-            <rect x="1270" y="682" width="280" height="52" rx="14" fill="#183d2b" stroke="#8ce99a"/>
-            <text x="1410" y="714" text-anchor="middle" fill="#edf3ff" font-size="16" font-weight="700">guard_plans.json · local authority</text>
-            <rect x="1270" y="754" width="280" height="52" rx="14" fill="#183d2b" stroke="#8ce99a"/>
-            <text x="1410" y="786" text-anchor="middle" fill="#edf3ff" font-size="16" font-weight="700">audit.jsonl · bounded + redacted</text>
-            <rect x="1270" y="826" width="280" height="52" rx="14" fill="#183d2b" stroke="#8ce99a"/>
-            <text x="1410" y="858" text-anchor="middle" fill="#edf3ff" font-size="16" font-weight="700">state.json + reports/*.json</text>
-            <rect x="1270" y="898" width="280" height="44" rx="13" fill="#183d2b" stroke="#8ce99a"/>
-            <text x="1410" y="926" text-anchor="middle" fill="#edf3ff" font-size="15" font-weight="700">claim lock · atomic writes</text>
-          </g>
-
-          <!-- Arrows: integrations -->
-          <path d="M330 171 H430" stroke="#74c0fc" stroke-width="3" fill="none" marker-end="url(#arrow-blue)"/>
-          <text x="380" y="157" text-anchor="middle" fill="#aab6ce" font-size="13">register(ctx)</text>
-          <path d="M330 266 H430" stroke="#74c0fc" stroke-width="3" fill="none" marker-end="url(#arrow-blue)"/>
-          <text x="380" y="251" text-anchor="middle" fill="#aab6ce" font-size="13">tool + prompt + hook</text>
-          <path d="M330 355 H695" stroke="#74c0fc" stroke-width="3" fill="none" marker-end="url(#arrow-blue)"/>
-          <text x="500" y="342" text-anchor="middle" fill="#aab6ce" font-size="13">CLI / async slash</text>
-          <path d="M330 430 H1065 V208" stroke="#74c0fc" stroke-width="3" fill="none" marker-end="url(#arrow-blue)"/>
-
-          <!-- Pipeline -->
-          <path d="M640 311 H690" stroke="#b197fc" stroke-width="3" fill="none" marker-end="url(#arrow-violet)"/>
-          <path d="M900 311 H950" stroke="#b197fc" stroke-width="3" fill="none" marker-end="url(#arrow-violet)"/>
-          <path d="M1060 352 V410" stroke="#ffe066" stroke-width="3" fill="none" marker-end="url(#arrow-orange)"/>
-          <path d="M950 453 H900" stroke="#ffc078" stroke-width="3" fill="none" marker-end="url(#arrow-orange)"/>
-          <path d="M690 453 H640" stroke="#b197fc" stroke-width="3" fill="none" marker-end="url(#arrow-violet)"/>
-          <path d="M535 496 V575" stroke="#b197fc" stroke-width="3" fill="none" marker-end="url(#arrow-violet)"/>
-          <path d="M650 619 H705" stroke="#b197fc" stroke-width="3" fill="none" marker-end="url(#arrow-violet)"/>
-          <path d="M925 619 H980" stroke="#8ce99a" stroke-width="3" fill="none" marker-end="url(#arrow-teal)"/>
-          <path d="M1075 663 V735" stroke="#8ce99a" stroke-width="3" fill="none" marker-end="url(#arrow-teal)"/>
-
-          <!-- Plugin to external -->
-          <path d="M1170 453 H1222 V170 H1270" stroke="#ffc078" stroke-width="3" stroke-dasharray="8 6" fill="none" marker-end="url(#arrow-orange)"/>
-          <text x="1218" y="303" text-anchor="end" fill="#ffc078" font-size="13" transform="rotate(-90 1218 303)">redacted + bounded HTTPS POST</text>
-
-          <!-- Core read and mutation -->
-          <path d="M430 311 H375 V641 H330" stroke="#63e6be" stroke-width="3" fill="none" marker-end="url(#arrow-teal)"/>
-          <text x="370" y="502" text-anchor="end" fill="#63e6be" font-size="13" transform="rotate(-90 370 502)">read-only inventory</text>
-          <path d="M430 335 H390 V727 H330" stroke="#63e6be" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#arrow-teal)"/>
-          <path d="M980 619 H365 V813 H330" stroke="#8ce99a" stroke-width="3" fill="none" marker-end="url(#arrow-teal)"/>
-          <text x="612" y="799" text-anchor="middle" fill="#8ce99a" font-size="13">snapshot before apply</text>
-          <path d="M980 642 H390 V905 H330" stroke="#8ce99a" stroke-width="3" fill="none" marker-end="url(#arrow-teal)"/>
-          <text x="655" y="892" text-anchor="middle" fill="#8ce99a" font-size="13">ctx.dispatch_tool("skill_manage") · background_review</text>
-
-          <!-- State connections -->
-          <path d="M900 453 H1200 V636 H1270" stroke="#8ce99a" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#arrow-teal)"/>
-          <path d="M925 619 H1210 V708 H1270" stroke="#8ce99a" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#arrow-teal)"/>
-          <path d="M1170 850 H1225 V852 H1270" stroke="#8ce99a" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#arrow-teal)"/>
-        </svg>
+          <aside class="arch-zone arch-state">
+            <header>
+              <h3>Profile-local state</h3>
+              <p>$HERMES_HOME/jev-curator · mode 0600</p>
+            </header>
+            <p class="arch-link">← atomic, bounded, redacted persistence</p>
+            <ul class="arch-list">
+              <li class="arch-node"><strong>relations.json</strong><small>content + contract keyed cache</small></li>
+              <li class="arch-node"><strong>guard_plans.json</strong><small>local hash-bound authority</small></li>
+              <li class="arch-node"><strong>audit.jsonl</strong><small>bounded + redacted</small></li>
+              <li class="arch-node"><strong>state.json + reports/*.json</strong><small>last run, skipped pairs, and review artifacts</small></li>
+              <li class="arch-node"><strong>claim.lock</strong><small>single-run ownership</small></li>
+            </ul>
+          </aside>
+        </div>
       </div>
+      <p class="diagram-help">The numbered center lane is execution order. Connectors live in dedicated rows, so no route crosses a label.</p>
       <div class="legend" aria-label="Diagram legend">
         <span><i class="dot" style="background:var(--blue)"></i>Hermes invocation/config</span>
         <span><i class="dot" style="background:var(--violet)"></i>Plugin processing</span>
@@ -396,7 +332,9 @@
         <h3 style="color:var(--blue)">Observe path</h3>
         <div class="step"><strong>Inventory + candidates</strong><small>Deterministic and local.</small></div>
         <div class="step guard"><strong>Consent gate</strong><small>No request unless mode is not off and content egress is explicitly enabled.</small></div>
-        <div class="step"><strong>Typed Jev judgment</strong><small>Malformed, truncated, or nonfinite evidence fails closed.</small></div>
+        <div class="step"><strong>Whole/chunk request plan</strong><small>Serialized bytes and estimated tokens are bounded; impossible directions stay local.</small></div>
+        <div class="step"><strong>Typed Jev evidence</strong><small>Every planned chunk must answer; malformed or nonfinite evidence fails the pair.</small></div>
+        <div class="step"><strong>Fail-closed aggregation</strong><small>Minimum preservation/coverage, maximum conflict, and zero for unmeasured directions.</small></div>
         <div class="step pass"><strong>Graph + report</strong><small>Plans may be produced; skills remain byte-identical.</small></div>
       </article>
       <article class="flow">
@@ -424,30 +362,30 @@
     <div class="invariants">
       <div class="invariant"><strong>Read-only default</strong><span>Observe mode is the fallback for missing, malformed, or unknown mode values.</span></div>
       <div class="invariant"><strong>Explicit egress consent</strong><span>Redacted, bounded skill content leaves the machine only after a dedicated boolean opt-in.</span></div>
-      <div class="invariant"><strong>Typed evidence</strong><span>Every answer is validated; missing keys, invalid probability sets, NaN, and truncation cannot authorize.</span></div>
+      <div class="invariant"><strong>Typed evidence</strong><span>Whole, chunked, and unavailable states are explicit; missing chunks, invalid probabilities, NaN, and truncation cannot authorize.</span></div>
       <div class="invariant"><strong>Hash binding</strong><span>Cache keys, graph edges, plans, guard checks, and apply checks pin package content digests.</span></div>
       <div class="invariant"><strong>Direct edges only</strong><span>No transitive merge authorization. Every absorbed member needs its own canonical relation.</span></div>
       <div class="invariant"><strong>Core owns protection</strong><span>Eligibility, provenance, references, snapshots, ledger, archive, restore, and rollback come from Hermes.</span></div>
       <div class="invariant"><strong>No hard delete</strong><span>The only destructive action is a recoverable archive through core's background-review path.</span></div>
       <div class="invariant"><strong>Fail-closed guard</strong><span>Stale plans, ambiguous names, mismatched paths, protected artifacts, content edits, and hook errors block.</span></div>
     </div>
-    <div class="note"><strong>Measured boundary:</strong> wiring and safety behavior are verified offline. Live Jev model quality and apply behavior against a production skill library remain intentionally unclaimed.</div>
+    <div class="note"><strong>Measured boundary:</strong> wiring, safety behavior, and live whole/chunk transport are verified. The live run is an integration smoke test; Jev semantic quality and apply behavior against a production skill library remain intentionally unclaimed.</div>
   </section>
 
   <section id="evidence">
     <div class="section-head">
       <h2>Verification evidence</h2>
-      <p>Concrete gates run against the finished v0.1.0 tree.</p>
+      <p>Concrete gates run against the installed v0.1.0 tree.</p>
     </div>
     <div class="panel evidence">
-      <div class="metric"><strong>259 + 60</strong><span>tests + subtests passed</span></div>
+      <div class="metric"><strong>303 + 69</strong><span>tests + subtests passed</span></div>
       <div class="metric"><strong>21 / 21</strong><span>synthetic corpus labels correct</span></div>
       <div class="metric"><strong>0</strong><span>false merge authorizations</span></div>
-      <div class="metric"><strong>110 / 110</strong><span>real-load harness checks passed</span></div>
+      <div class="metric"><strong>3</strong><span>explicit evidence modes: whole · chunked · unavailable</span></div>
     </div>
     <div class="cards" style="margin-top:14px">
       <article class="card"><h3>Runtime discovery</h3><p>One skills tool, two hooks, curator-only prompt, CLI and async slash surfaces all load through the real plugin manager.</p><code>plugins doctor + validate: PASS</code></article>
-      <article class="card"><h3>Isolation and egress</h3><p>Scratch profiles stayed isolated; default runs made zero network calls; consented payloads were redacted, bounded, and digest-free.</p><code>default socket attempts: 0</code></article>
+      <article class="card"><h3>Isolation and egress</h3><p>Scratch profiles stayed isolated; default runs made zero network calls; consented payloads were redacted, digest-free, and bounded in serialized bytes plus estimated tokens.</p><code>default socket attempts: 0</code></article>
       <article class="card"><h3>Mutation discipline</h3><p>Snapshot, direct-edge evidence, fresh digests, protection checks, archive confirmation, and post-write verification are all required.</p><code>lock overlap: 0 / 40 trials</code></article>
     </div>
   </section>

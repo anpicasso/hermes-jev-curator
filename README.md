@@ -3,13 +3,11 @@
 **Typed, per-pair skill-relationship judgments for [Hermes Agent](https://github.com/NousResearch/hermes-agent)'s
 background skill curator, served by [TypeSafe's](https://typesafe.ai) Jev decision model.**
 
-> **Proof of concept (0.1.0).** The plugin loads, registers, and runs against stock Hermes
-> (`hermes plugins doctor` / `validate` pass); its behavior is covered by the unit suite in
-> `plugin/tests/`. It has **not** been exercised against a live Jev endpoint; the bundled
-> synthetic corpus is a contract self-check, not a model-quality benchmark, and no live metric
-> is claimed. Treat it as experimental: default mode is read-only
-> `observe`, and the mutation path (`run --apply`) refuses unless `mode: apply` is set
-> explicitly.
+> **Experimental release (0.1.0).** The plugin loads and runs against stock Hermes,
+> passes `hermes plugins doctor` / `validate`, and has been exercised against the live TypeSafe
+> endpoint with whole, chunked, and locally unavailable pairs. The bundled synthetic corpus is
+> still a contract self-check, not a model-quality benchmark. Default mode is read-only
+> `observe`; `run --apply` still refuses unless `mode: apply` is set explicitly.
 
 ## What it does
 
@@ -33,14 +31,14 @@ This plugin adds a typed layer in front of it:
    sources that a validated plan says the canonical already preserves, through core's ledgered
    `skill_manage`, after a pre-apply snapshot. Umbrella prose stays core's job.
 
-## Status (0.1.0 PoC)
+## Status (0.1.0)
 
 | component | state |
 |---|---|
 | inventory, candidate generation, question contract, transport | implemented, unit-tested |
 | plugin manifest + `register(ctx)` (tool / prompt / lifecycle + guard hooks / commands) | implemented; `doctor` + `validate` pass; real-load verified |
-| graph, plans, state (audit / cache / lock / reports), `run --apply` | implemented, unit-tested; never run against a live library |
-| live Jev endpoint | not yet exercised end-to-end |
+| graph, plans, state (audit / cache / lock / reports), `run --apply` | implemented and unit-tested; no production-library apply has been run |
+| live Jev endpoint | exercised end-to-end with whole and multi-request chunked evidence; no model-quality claim |
 | frozen offline benchmark (`benchmarks/`) | 21 synthetic relation/adversarial cases; self-check only, not a live-model quality claim |
 
 ## Stock-core integration
@@ -78,7 +76,7 @@ to a write mode.
 
 ## Install
 
-Once the repository is published:
+Install from GitHub:
 
 ```bash
 hermes plugins install anpicasso/hermes-jev-curator/plugin
@@ -123,15 +121,22 @@ plugins:
 
 ### Long pairs
 
-Pairs whose redacted package text fits both the measured 160k-byte request-state ceiling and
-a conservative token budget use one whole-pair request. Larger pairs are split deterministically
-at package-file markers, then
-Markdown headings, then fixed-overlap hard boundaries; one side stays whole while every chunk of
-the other is judged. Aggregation is fail-closed (`min` preservation/coverage, `max` conflict): a
-missing or malformed chunk fails the pair, and an unmeasured containment direction is `0.0`.
-Pairs that cannot keep either containing side whole return `insufficient_evidence` without a
-network call. `max_requests` counts actual planned requests; a pair that does not fit the
-remaining budget is reported in `scan["skipped"]` and never partially judged.
+Pairs whose redacted package text fits both the **160,000-byte serialized-state ceiling** and the
+**24,000-token conservative estimate** use one whole-pair request. The planner counts JSON
+escaping as sent on the wire; the token estimator deliberately over-counts code, punctuation,
+newlines, and high-entropy runs so a byte-safe request cannot quietly exceed the model context.
+
+Larger pairs are planned per containment direction. The candidate source is split at package-file
+markers, then Markdown headings, then fixed-overlap hard boundaries, while the proposed container
+stays whole in every request. Each request records its side, chunk index/count, file scope, and
+containment question. A direction is unavailable when its container cannot fit whole.
+
+Aggregation is fail-closed, not a vote: every planned chunk must answer; preservation and coverage
+use `min`, conflict uses `max`, and any conflict label wins. Certified directions determine
+duplicate/subset labels; disagreement becomes `insufficient_evidence`; an unmeasured direction is
+always `0.0`. If neither direction is plannable, the pair becomes local
+`insufficient_evidence` without a network call. `max_requests` counts actual requests, and pairs
+that do not fit the remaining budget are persisted in `scan["skipped"]` without partial calls.
 
 Endpoint presets:
 

@@ -2,13 +2,15 @@
 
 Visual companion: [interactive architecture diagram](architecture.html).
 
-Design and implementation notes for the 0.1.0 proof of concept. Status is marked per component:
-**implemented** (in `plugin/`, unit-tested), **verified** (exercised against the installed host,
-not just read), or **not yet done** (no live endpoint or live-model benchmark run).
+Design and implementation notes for the 0.1.0 experimental release. Status is marked per
+component: **implemented** (in `plugin/`, unit-tested), **verified** (exercised through an
+installed snapshot), or **not yet done** (no production-library mutation or model-quality
+benchmark).
 
 Verified against Hermes Agent v0.21.3 using source checkout `522e121e`: `hermes plugins doctor` and
 `hermes plugins validate` pass, the plugin loads through the real discovery path, and its
-registered surfaces were probed under a scratch `HERMES_HOME`.
+registered surfaces were probed under a scratch `HERMES_HOME`. The installed default-profile
+snapshot was also exercised against TypeSafe with whole, chunked, and locally unavailable pairs.
 
 ## Pipeline
 
@@ -46,14 +48,18 @@ criteria (`duplicate`, `a_subset_of_b`, `b_subset_of_a`, `same_class`, `compleme
 `conflict`, `unrelated`, `insufficient_evidence`), plus typed coverage, containment, conflict,
 and same-class nouls. Pair state is never truncated.
 
-If both redacted packages fit the measured 160k-byte state ceiling and conservative token budget,
-one whole-pair request asks the
-unchanged six-question contract. Otherwise the planner evaluates each plannable containment
-direction separately: the candidate being absorbed is split at package-file markers, then
-Markdown headings, then fixed-overlap hard boundaries, while the proposed containing side travels
-whole in every request. A chunk request asks only relation, coverage, conflict, and the matching
-containment noul. If neither direction can keep its containing side whole, the pair gets local
-`insufficient_evidence` with `evidence="unavailable"` and no network call.
+If both redacted packages fit the 160,000-byte serialized-state ceiling and the conservative
+24,000-token estimate, one whole-pair request asks the unchanged six-question contract. Serialized
+size includes JSON escaping. The stdlib-only token estimate intentionally over-counts code,
+punctuation, newlines, and high-entropy runs; it exists because a live 158k Markdown/code state was
+byte-safe but exceeded the model context.
+
+Otherwise the planner evaluates each plannable containment direction separately: the candidate
+being absorbed is split at package-file markers, then Markdown headings, then fixed-overlap hard
+boundaries, while the proposed containing side travels whole in every request. Every assembled
+state is rechecked against both ceilings. A chunk request asks only relation, coverage, conflict,
+and the matching containment noul. If neither direction can keep its containing side whole, the
+pair gets local `insufficient_evidence` with `evidence="unavailable"` and no network call.
 
 Aggregation is deterministic and fail-closed: every planned chunk must answer; preservation and
 coverage use `min`, conflict uses `max`, and any conflict label wins. Certified directions produce
@@ -81,8 +87,14 @@ requests, not pairs. A pair that cannot fit the remaining request budget is repo
 `scan["skipped"]` and is never partially judged; later cache hits and cheaper pairs may still be
 used. Requests within one pair are sequential, while different pairs keep the four-worker pool.
 Judgments are cached in `relations.json` under both content digests, contract version, and judge
-model; the v2 contract therefore cannot replay truncation-era v1 rows. Any chunk failure is one
+model; the v3 contract therefore cannot replay truncation-era v1/v2 rows. Any chunk failure is one
 pair error with no partial judgment, and the scan reports `ok: false`.
+
+Live integration smoke test (not a quality benchmark): the installed guard-mode profile inventoried
+27 managed skills and produced 100 candidates. With `max_requests: 50`, it returned 9 judgments
+(8 chunked, 1 locally unavailable), persisted 91 request-budget skips, reported zero errors, and
+authorized no plans. A representative long Markdown/code pair that previously hit the endpoint's
+token limit completed after the v3 byte-plus-token planner shipped.
 
 ### 3. Direct-edge graph — implemented
 
@@ -182,8 +194,9 @@ Notes that matter:
    (content-addressed, not timestamp-addressed).
 6. **Direct edges only.** No transitive closure, no inferred relations, no similarity score may
    authorize absorption — only a judged, direct, high-confidence containment or duplicate.
-7. **Explicit refusals.** Every refusal reason is recorded and counted (graph `refusals`,
-   scan `errors`), so a blocked merge is diagnosable instead of silent.
+7. **Explicit refusals.** Every refusal reason is recorded and counted (graph `refusals`, scan
+   `errors`, request-budget `skipped`), so a blocked or deferred pair is diagnosable instead of
+   silent.
 8. **Apply gates.** `mode: apply` plus a terminal `--apply` plus validated plans plus a
    snapshot plus digest/name/protection checks plus post-archive verification; chat can never
    apply.
@@ -213,21 +226,21 @@ Notes that matter:
 
 ## Roadmap and kill criteria
 
-### v1 — delivered (wire-up)
+### Delivered — wire-up and bounded long-pair evidence
 
 Manifest + registration, `jev_skill_relations` tool in the skills toolset, curator-gated prompt
 section, lifecycle observer, offline `pre_tool_call` mutation guard, `hermes jev-curator` /
-`/jev-curator` commands, graph + plans, state/cache/audit/reports, gated `run --apply`. Unit suite
-in `plugin/tests/`; `doctor` + `validate` pass.
+`/jev-curator` commands, graph + plans, state/cache/audit/reports, gated `run --apply`, and the v3
+whole/chunked/unavailable evidence planner. Unit suite in `plugin/tests/`; `doctor` + `validate`
+pass; the live TypeSafe route and an installed real-library scan have been exercised.
 
-Remaining before calling the PoC complete:
+Remaining before treating it as production-proven:
 
-- **exercise a live Jev endpoint** end-to-end (the contract validator is unit-tested against
-  stubs, not against TypeSafe's real answers);
-- **run observe against a real library** and report the numbers (pairs judged, refusals per
-  reason, baseline-vs-Jev agreement) — no metric exists yet;
-- measure false blocks and useful catches from the offline `pre_tool_call` guard before enabling
-  `guard` anywhere beyond a test profile.
+- measure false blocks and useful catches from the offline `pre_tool_call` guard over repeated
+  real-library runs;
+- benchmark relation quality against a reviewed corpus; the live scan proves integration, not
+  semantic accuracy;
+- exercise `run --apply` only in a disposable profile before any production-library mutation.
 
 Kill criteria:
 
@@ -238,17 +251,17 @@ Kill criteria:
 - a single false-positive absorption on a realistic corpus → `apply` goes back behind an
   explicit opt-in and the graph policy is re-derived from measurements.
 
-### v2 — generated-umbrella preservation verification
+### Next — generated-umbrella preservation verification
 
 Extend the current relation guard with preservation re-verification against *generated* umbrella
-bytes before sources are archived. V1 deliberately blocks those content writes because its
-pairwise relation plan cannot certify unseen replacement text.
+bytes before sources are archived. The current relation plan deliberately blocks those content
+writes because pairwise evidence cannot certify unseen replacement text.
 
 Kill criteria: if the hook's local decision needs a network call, kill it — `pre_tool_call` is
 the only fail-closed hook and a Jev outage must not block every curator write. If guard and
 apply verdicts ever disagree on the same corpus (two implementations), kill the guard half.
 
-### v3 — beyond pairs
+### Later — beyond pairs
 
 Component-level plans from the direct-edge graph, stale/unused signals from usage telemetry, and
 possibly utility evidence.
