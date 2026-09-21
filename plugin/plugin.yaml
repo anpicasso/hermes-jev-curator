@@ -1,0 +1,69 @@
+name: jev-curator
+version: 0.1.0
+description: "Typed Jev relation judgments and a local mutation guard for curator-managed skills, with an observe-by-default command surface and explicitly gated apply mode."
+author: "Angello Picasso"
+license: MIT
+homepage: "https://github.com/anpicasso/hermes-jev-curator"
+kind: standalone
+manifest_version: 2
+requires_hermes: ">=0.21.2"
+tags: [skills, curator, jev, governance]
+
+# Doctor diffs these declared tool/hook surfaces against a recording run of register(ctx).
+provides_tools:
+  - jev_skill_relations
+provides_hooks:
+  - on_skill_lifecycle
+  - pre_tool_call
+
+# No privileged capability is used: the tool never overrides a built-in, no host-owned LLM
+# call is made, and no gateway action is taken.
+capabilities: []
+
+# Keys read via ctx.get_config(key) -> plugins.entries.jev-curator.settings.<key>;
+# mode defaults to observe (judge only, never mutate).
+config_schema:
+  mode:
+    type: str
+    default: observe
+    description: "off | observe | guard | apply — network use and mutation policy (default observe)."
+  provider:
+    type: str
+    default: typesafe
+    description: "Jev decision backend: typesafe, openrouter, or custom."
+  base_url:
+    type: str
+    default: ""
+    description: "Full Jev decision URL; required only for provider: custom."
+  jev_model:
+    type: str
+    default: ""
+    description: "Backend model id; empty uses the provider default."
+  key_env:
+    type: str
+    default: ""
+    description: "Environment variable holding the API key; empty uses the provider default."
+  allow_content_egress:
+    type: bool
+    default: false
+    description: "Explicit consent to send redacted, bounded skill content to the configured Jev endpoint."
+  timeout_seconds:
+    type: number
+    default: 25.0
+    description: "Per-request deadline in seconds (1-120)."
+  max_requests:
+    type: int
+    default: 50
+    description: "Maximum Jev requests per scan (1-500)."
+  max_pairs:
+    type: int
+    default: 100
+    description: "Maximum candidate pairs per scan (1-2000)."
+  top_k:
+    type: int
+    default: 5
+    description: "Lexical neighbors kept per skill (1-20)."
+  max_state_chars:
+    type: int
+    default: 120000
+    description: "Bounded package text sent to Jev per pair (4000-500000)."
