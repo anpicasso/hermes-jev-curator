@@ -306,9 +306,13 @@
   <section id="integrations">
     <div class="section-head">
       <h2>Hermes integration seams</h2>
-      <p>Everything rides stock plugin APIs; there are no core patches or monkeypatches.</p>
+      <p>A companion to stock Curator, not a replacement scheduler. Everything rides stock plugin APIs; there are no core patches or monkeypatches.</p>
     </div>
     <div class="panel seam-grid">
+      <article class="seam"><b>Scheduling boundary</b><p>Hermes Curator owns the idle timer and managed population. Curator is enabled by default; its LLM consolidation fork requires <code>curator.consolidate: true</code> or a one-off <code>hermes curator run --consolidate</code>.</p></article>
+      <article class="seam"><b>Runtime handshake</b><p>Core creates the fork with <code>platform="curator"</code> and the <code>skills</code> toolset. The plugin automatically adds its read-only relation tool and Curator-only evidence prompt there.</p></article>
+      <article class="seam"><b>Guard sequence</b><p>In guard/apply mode, <code>hermes jev-curator run</code> first replaces the local hash-bound plans; the later core consolidation fork is checked locally by <code>pre_tool_call</code>, with no network inside the hook.</p></article>
+      <article class="seam"><b>Scope boundary</b><p>The hook governs the LLM fork's background <code>skill_manage</code> calls, not core's deterministic age-based stale/archive transitions. Plugin <code>run --apply</code> is a separate terminal-only archive path.</p></article>
       <article class="seam"><b>Manifest</b><p><code>kind: standalone</code>, manifest v2, one tool and two hooks. Doctor/validate compare declarations with a recording execution of <code>register(ctx)</code>.</p></article>
       <article class="seam"><b>Skills toolset</b><p><code>jev_skill_relations</code> joins <code>toolset="skills"</code>, so the curator fork can request typed relations without gaining a mutation surface.</p></article>
       <article class="seam"><b>System prompt</b><p>A callable prompt section renders only when <code>session_info.platform == "curator"</code>. CLI, gateway, and unrelated agents receive nothing.</p></article>

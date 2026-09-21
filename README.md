@@ -31,6 +31,48 @@ This plugin adds a typed layer in front of it:
    sources that a validated plan says the canonical already preserves, through core's ledgered
    `skill_manage`, after a pre-apply snapshot. Umbrella prose stays core's job.
 
+## Hermes Curator integration
+
+This plugin complements stock Hermes Curator; it does **not** replace its scheduler or run on its
+own timer. Core Curator owns the managed-skill population, idle schedule, consolidation agent,
+snapshots, `skill_manage`, archive ledger, and rollback. Its LLM consolidation pass is off by
+default even though Curator itself is enabled by default. This is the core
+`curator.consolidate` setting, separate from the plugin settings:
+
+```yaml
+curator:
+  enabled: true
+  consolidate: true  # opt into automatic LLM umbrella passes; false by default
+```
+
+For a one-off pass, `hermes curator run --consolidate` enables consolidation for that invocation.
+When core starts that fork, it uses `platform="curator"` and the `skills` toolset. The enabled
+plugin then automatically:
+
+- adds the read-only `jev_skill_relations` tool to that toolset;
+- injects a Curator-only prompt requiring typed evidence before merges or absorptions;
+- records skill lifecycle events; and
+- in `guard`/`apply` mode, checks background `skill_manage` mutations with the local
+  `pre_tool_call` hook.
+
+The plugin's commands are a separate evidence/control path. In `guard` or `apply` mode, run
+`hermes jev-curator run` first to replace the local `guard_plans.json` authorization store with
+fresh hash-bound plans, then preview or run core consolidation:
+
+```bash
+hermes jev-curator run
+hermes curator run --dry-run --consolidate
+hermes curator run --consolidate
+```
+
+The guard performs no network call. It permits only an exact authorized archive into an existing
+canonical; content patches, overwrites, removals, stale hashes, and unplanned archives are blocked.
+`hermes jev-curator run --apply` is different: it bypasses the LLM consolidation fork and directly
+executes the plugin's terminal-only, snapshot-first archive path for already-preserved sources.
+
+**Scope boundary:** this integration governs the LLM consolidation fork's `skill_manage` calls.
+It does not change Hermes Curator's deterministic age-based stale/archive transitions.
+
 ## Status (0.1.0)
 
 | component | state |

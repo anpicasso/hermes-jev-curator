@@ -16,6 +16,26 @@ snapshot was also exercised against TypeSafe with whole, chunked, and locally un
 
     inventory ─► deterministic candidates ─► Jev typed judgments ─► direct-edge graph ─► plan ─► apply (ledgered skill_manage)
 
+### Hermes Curator runtime handshake
+
+The plugin is not a second scheduler. Stock Hermes Curator remains the owner of idle scheduling,
+managed-skill eligibility, the consolidation fork, snapshots, mutation ledger, archive, restore,
+and rollback. Curator is enabled by default; its LLM consolidation fork is separately opt-in with
+`curator.consolidate: true` or per invocation with `hermes curator run --consolidate`.
+
+The core fork is constructed with `platform="curator"` and `enabled_toolsets=["skills"]`. Plugin
+registration therefore contributes `jev_skill_relations` to the fork's existing toolset and emits
+its evidence instructions only into that fork's system prompt. `observe` stops there. In
+`guard`/`apply`, a prior `hermes jev-curator run` atomically replaces `guard_plans.json` with fresh
+hash-bound plans; the local `pre_tool_call` hook then checks background-review `skill_manage`
+mutations without network access. Only an exact planned archive into an existing canonical can
+pass; proposed content bytes are not certified by pair evidence and remain blocked.
+
+The terminal-only `hermes jev-curator run --apply` path is separate from the core consolidation
+fork: it applies already-preserved direct-edge plans through core's snapshot and ledgered archive
+surfaces. The deterministic age-based stale/archive pass does not use this LLM-fork integration and
+is unchanged by the plugin.
+
 ### 1. Inventory and candidate generation — implemented
 
 `plugin/inventory.py` walks `$HERMES_HOME/skills` through core's own reporting
