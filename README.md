@@ -45,7 +45,7 @@ pending timers. Mere skill loads do not schedule work.
 **Compatibility note:** the one-minute debounce is a pragmatic workaround over Hermes' current
 per-event `on_skill_lifecycle` seam, not a replacement for core. The cleaner long-term API would be
 one host hook after Hermes has finished all lifecycle actions in a burst. We intend to propose that
-small upstream feature amicably; until then, the debounce provides autonomous refresh without a
+small upstream feature; until then, the debounce provides autonomous refresh without a
 core patch.
 
 The timer preserves the originating profile's `$HERMES_HOME` and credential scope. Automatic runs
