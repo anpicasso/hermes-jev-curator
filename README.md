@@ -123,8 +123,9 @@ plugins:
 
 ### Long pairs
 
-Pairs whose redacted package text fits the measured 160k-byte request-state budget use one
-whole-pair request. Larger pairs are split deterministically at package-file markers, then
+Pairs whose redacted package text fits both the measured 160k-byte request-state ceiling and
+a conservative token budget use one whole-pair request. Larger pairs are split deterministically
+at package-file markers, then
 Markdown headings, then fixed-overlap hard boundaries; one side stays whole while every chunk of
 the other is judged. Aggregation is fail-closed (`min` preservation/coverage, `max` conflict): a
 missing or malformed chunk fails the pair, and an unmeasured containment direction is `0.0`.

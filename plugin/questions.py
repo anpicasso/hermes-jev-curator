@@ -1,7 +1,7 @@
 """Versioned Jev question contract and the deterministic long-pair request planner.
 
-A request carries both packages whole only inside the measured capacity
-(``PAIR_STATE_BUDGET_CHARS``). Anything larger is chunked: each package text is redacted
+A request carries both packages whole only inside the measured byte and token capacities.
+Anything larger is chunked: each package text is redacted
 once, split at the file markers ``inventory._read_package`` writes, then at Markdown
 headings, then hard-split with a fixed overlap; every request carries one chunk plus the
 *whole* other side, so no request is ever truncated and no judgment rests on text that was
@@ -25,13 +25,14 @@ from .graph import MIN_PRESERVATION
 from .models import RELATIONS, RelationJudgment, SkillArtifact
 
 
-CONTRACT_VERSION = "skill-relations-v2"
+CONTRACT_VERSION = "skill-relations-v3"
 
-# Measured (TypeSafe Jev, live): 160k chars / 30,880 tokens accepted with strong needle
-# recall, 176k rejected; the margin below the rejection point covers the JSON envelope,
-# the question set, and tokenizer variance. Code, never settings: changing this is a
-# contract change and must bump CONTRACT_VERSION.
+# Measured (TypeSafe Jev, live): 160k low-entropy chars / 30,880 tokens are accepted,
+# while a 158k Markdown/code body can exceed the model token limit. Keep the byte ceiling
+# for transport safety and a conservative stdlib-only token estimate with room for Jev's
+# prompt and answer. Code, never settings: changing either is a contract change.
 PAIR_STATE_BUDGET_CHARS = 160_000
+PAIR_STATE_TOKEN_BUDGET = 24_000
 STATE_RESERVE_CHARS = 1_000  # names, contract key, scope keys
 # ponytail: this gates usable capacity; intact natural sections may be smaller.
 CHUNK_FLOOR_CHARS = 2_000
@@ -46,6 +47,7 @@ _HEADING_SPLIT = re.compile(r"(?m)(?=^#{1,6} )")
 _UNSAFE_NAME_CHARS = re.compile(
     r"[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069]"
 )
+_TOKEN_PART = re.compile(r"[A-Za-z0-9_]+|[^\s]", re.ASCII)
 RELATION_CRITERIA = {
     "duplicate": "The two packages encode the same operational procedure and one adds no important rule.",
     "a_subset_of_b": "Every important rule in skill_a is covered by skill_b, while skill_b contains additional useful material.",
@@ -150,6 +152,12 @@ def state_bytes(state: Mapping[str, Any]) -> int:
                           allow_nan=False).encode("utf-8"))
 
 
+def state_tokens(state: Mapping[str, Any]) -> int:
+    """Conservative token estimate for a serialized state, without a tokenizer dependency."""
+    return _estimated_tokens(json.dumps(dict(state), ensure_ascii=False, separators=(",", ":"),
+                                        allow_nan=False))
+
+
 def request_body_bytes(state: Mapping[str, Any], questions: Mapping[str, Any], *,
                        model: str = "") -> int:
     """UTF-8 bytes of the whole POST body (state + model + questions) the transport builds."""
@@ -158,8 +166,8 @@ def request_body_bytes(state: Mapping[str, Any], questions: Mapping[str, Any], *
                           allow_nan=False).encode("utf-8"))
 
 
-def chunk_text(text: str, limit: int) -> list[Chunk]:
-    """Split a redacted package into chunks using at most `limit` serialized bytes.
+def chunk_text(text: str, limit: int, *, token_limit: int | None = None) -> list[Chunk]:
+    """Split a redacted package into byte- and token-bounded chunks.
 
     Order: the file markers ``inventory._read_package`` writes, then Markdown headings
     inside an oversized file, then a hard split with ``CHUNK_OVERLAP_CHARS`` overlap.
@@ -167,6 +175,7 @@ def chunk_text(text: str, limit: int) -> list[Chunk]:
     and every chunk is a substring of `text`.
     """
     limit = int(limit)
+    token_limit = int(token_limit) if token_limit is not None else None
     if limit < CHUNK_FLOOR_CHARS:
         raise ValueError(f"chunk limit {limit} is below CHUNK_FLOOR_CHARS={CHUNK_FLOOR_CHARS}")
     if not text:
@@ -176,17 +185,17 @@ def chunk_text(text: str, limit: int) -> list[Chunk]:
         if not segment:
             continue
         files = _file_label(segment)
-        if _serialized_text_bytes(segment) <= limit:
+        if _chunk_fits(segment, limit, token_limit):
             leaves.append((segment, files))
             continue
         for section in _HEADING_SPLIT.split(segment):
             if not section:
                 continue
-            if _serialized_text_bytes(section) <= limit:
+            if _chunk_fits(section, limit, token_limit):
                 leaves.append((section, files))
             else:
-                leaves.extend((piece, files) for piece in _hard_split(section, limit))
-    groups = _pack(leaves, limit)
+                leaves.extend((piece, files) for piece in _hard_split(section, limit, token_limit))
+    groups = _pack(leaves, limit, token_limit)
     return [
         Chunk(index=index, count=len(groups), text="".join(piece for piece, _files in group),
               files=_files_of(group))
@@ -207,7 +216,8 @@ def plan_pair(a: SkillArtifact, b: SkillArtifact) -> PairPlan:
     b_text = redact_text(b.text)
     whole = _pair_state(a.name, a_text, b.name, b_text)
     if (utf8_size(a_text) + utf8_size(b_text) <= PAIR_STATE_BUDGET_CHARS - STATE_RESERVE_CHARS
-            and state_bytes(whole) <= PAIR_STATE_BUDGET_CHARS):
+            and state_bytes(whole) <= PAIR_STATE_BUDGET_CHARS
+            and state_tokens(whole) <= PAIR_STATE_TOKEN_BUDGET):
         return PairPlan(requests=(PairRequest(state=whole, questions=relation_questions()),))
     requests: list[PairRequest] = []
     for side, name, text, other_name, other_text in (
@@ -308,15 +318,18 @@ def _direction_requests(*, side: str, name: str, text: str,
     containment = "a_in_b" if side == "a" else "b_in_a"
     limit = PAIR_STATE_BUDGET_CHARS - state_bytes(
         _sided_state(side, name, "", other_name, other_text, _PLACEHOLDER_SCOPE))
-    if limit < CHUNK_FLOOR_CHARS:
+    token_limit = PAIR_STATE_TOKEN_BUDGET - state_tokens(
+        _sided_state(side, name, "", other_name, other_text, _PLACEHOLDER_SCOPE))
+    if limit < CHUNK_FLOOR_CHARS or token_limit < 1:
         return []
     questions = _chunk_questions(containment)
     requests: list[PairRequest] = []
-    for chunk in chunk_text(text, limit):
+    for chunk in chunk_text(text, limit, token_limit=token_limit):
         state = _sided_state(side, name, chunk.text, other_name, other_text,
                              _scope(chunk.index, chunk.count, chunk.files))
-        if state_bytes(state) > PAIR_STATE_BUDGET_CHARS:
-            raise ValueError("planned pair state exceeds PAIR_STATE_BUDGET_CHARS")
+        if (state_bytes(state) > PAIR_STATE_BUDGET_CHARS
+                or state_tokens(state) > PAIR_STATE_TOKEN_BUDGET):
+            raise ValueError("planned pair state exceeds its byte or token budget")
         requests.append(PairRequest(state=state, questions=questions, side=side,
                                     index=chunk.index, count=chunk.count,
                                     containment=containment))
@@ -370,8 +383,8 @@ def _file_label(segment: str) -> tuple[str, ...]:
     return (_safe_name(raw),) if raw else ()
 
 
-def _hard_split(text: str, limit: int) -> list[str]:
-    """JSON-size-bounded windows with overlap, cut at character boundaries.
+def _hard_split(text: str, limit: int, token_limit: int | None = None) -> list[str]:
+    """JSON-size- and token-bounded windows with overlap, cut at character boundaries.
 
     JSON escaping is counted because that is what the transport sends. The overlap is
     capped at half a short window so escape-heavy text still makes bounded progress.
@@ -382,7 +395,7 @@ def _hard_split(text: str, limit: int) -> list[str]:
         low, high, end = start + 1, len(text), start
         while low <= high:
             middle = (low + high) // 2
-            if _serialized_text_bytes(text[start:middle]) <= limit:
+            if _chunk_fits(text[start:middle], limit, token_limit):
                 end, low = middle, middle + 1
             else:
                 high = middle - 1
@@ -397,17 +410,21 @@ def _hard_split(text: str, limit: int) -> list[str]:
 
 
 def _pack(leaves: list[tuple[str, tuple[str, ...]]],
-          limit: int) -> list[list[tuple[str, tuple[str, ...]]]]:
+          limit: int, token_limit: int | None = None) -> list[list[tuple[str, tuple[str, ...]]]]:
     groups: list[list[tuple[str, tuple[str, ...]]]] = []
     current: list[tuple[str, tuple[str, ...]]] = []
     size = 0
+    tokens = 0
     for piece, files in leaves:
         piece_size = _serialized_text_bytes(piece)
-        if current and size + piece_size > limit:
+        piece_tokens = _serialized_text_tokens(piece)
+        if current and (size + piece_size > limit
+                        or token_limit is not None and tokens + piece_tokens > token_limit):
             groups.append(current)
-            current, size = [], 0
+            current, size, tokens = [], 0, 0
         current.append((piece, files))
         size += piece_size
+        tokens += piece_tokens
     if current:
         groups.append(current)
     return groups
@@ -423,6 +440,29 @@ def _files_of(group: list[tuple[str, tuple[str, ...]]]) -> tuple[str, ...]:
 def _serialized_text_bytes(text: str) -> int:
     """Bytes added when `text` is inserted into an ensure_ascii=False JSON string."""
     return len(json.dumps(text, ensure_ascii=False).encode("utf-8")) - 2
+
+
+def _serialized_text_tokens(text: str) -> int:
+    return max(0, _estimated_tokens(json.dumps(text, ensure_ascii=False)) - 2)
+
+
+def _chunk_fits(text: str, byte_limit: int, token_limit: int | None) -> bool:
+    return (_serialized_text_bytes(text) <= byte_limit
+            and (token_limit is None or _serialized_text_tokens(text) <= token_limit))
+
+
+def _estimated_tokens(text: str) -> int:
+    """Conservative prose/code estimate; high-entropy runs count one token per byte."""
+    value = str(text)
+    total = value.count("\n")
+    for match in _TOKEN_PART.finditer(value):
+        token = match.group(0)
+        raw = token.encode("utf-8")
+        if len(raw) > 64 and len(set(token)) > 16:
+            total += len(raw)
+        else:
+            total += max(1, (len(raw) + 1) // 2)
+    return total
 
 
 def _noul(answer: Mapping[str, Any], key: str) -> float:

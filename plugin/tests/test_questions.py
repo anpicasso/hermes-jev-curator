@@ -22,6 +22,7 @@ from plugin.questions import (
     CHUNK_FLOOR_CHARS,
     CONTRACT_VERSION,
     PAIR_STATE_BUDGET_CHARS,
+    PAIR_STATE_TOKEN_BUDGET,
     STATE_RESERVE_CHARS,
     PairPlan,
     PairRequest,
@@ -32,6 +33,7 @@ from plugin.questions import (
     relation_questions,
     request_body_bytes,
     state_bytes,
+    state_tokens,
     utf8_size,
 )
 
@@ -169,7 +171,7 @@ def chunked_plan(a_text: str, b_text: str, *, budget: int | None = None) -> Pair
 
 class ContractTests(unittest.TestCase):
     def test_contract_bumped_and_truncation_removed(self):
-        self.assertEqual(CONTRACT_VERSION, "skill-relations-v2")
+        self.assertEqual(CONTRACT_VERSION, "skill-relations-v3")
         for name in ("pair_state", "preservation_state", "has_truncation", "_bounded",
                      "_TRUNCATION_MARKER"):
             self.assertFalse(hasattr(questions_module, name), f"{name} must be gone")
@@ -311,7 +313,8 @@ class ChunkingTests(unittest.TestCase):
 class PlanTests(unittest.TestCase):
     def test_fast_path_boundary_is_the_measured_budget_minus_reserve(self):
         self.assertEqual(79_000 + 80_000, PAIR_STATE_BUDGET_CHARS - STATE_RESERVE_CHARS)
-        with fast_redact():
+        with fast_redact(), mock.patch.object(
+                questions_module, "PAIR_STATE_TOKEN_BUDGET", 1_000_000):
             under = plan_pair(artifact("a", "a" * 79_000), artifact("b", "b" * 80_000))
             over = plan_pair(artifact("a", "a" * 79_000), artifact("b", "b" * 80_001))
         self.assertEqual(under.kind, "whole")
@@ -331,6 +334,15 @@ class PlanTests(unittest.TestCase):
         for request in over.requests:
             self.assertTrue(request.side in {"a", "b"})
             self.assertLessEqual(state_bytes(request.state), PAIR_STATE_BUDGET_CHARS)
+
+    def test_token_dense_pair_is_chunked_below_the_model_budget(self):
+        dense = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" * 2_000
+        with fast_redact():
+            plan = plan_pair(artifact("a", dense), artifact("b", "small"))
+        self.assertEqual(plan.kind, "chunked")
+        self.assertGreater(len(plan.requests), 1)
+        for request in plan.requests:
+            self.assertLessEqual(state_tokens(request.state), PAIR_STATE_TOKEN_BUDGET)
 
     def test_chunked_requests_keep_the_other_side_whole(self):
         big, small = filler(400_000), filler(10_000, "b")
@@ -352,7 +364,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual({request.count for request in plan.requests}, {len(plan.requests)})
 
     def test_both_directions_are_planned_when_both_whole_sides_fit(self):
-        a_text, b_text = filler(130_000, "a"), filler(40_000, "b")
+        a_text, b_text = "a" + " " * 79_999, "b" + " " * 79_999
         plan = chunked_plan(a_text, b_text)
         self.assertEqual(plan.directions, ("a_in_b", "b_in_a"))
         sides = [request.side for request in plan.requests]
@@ -438,12 +450,13 @@ class PlanTests(unittest.TestCase):
             self.assertLessEqual(state_bytes(request.state), 2_600)
 
     def test_multibyte_packages_stay_within_the_serialized_budget(self):
-        text = "漢" * 40_000  # 120k UTF-8 bytes per side
+        text = "漢" * 8_000  # 24k UTF-8 bytes and ~16k estimated tokens per side
         plan = chunked_plan(text, text)
         self.assertEqual(plan.kind, "chunked")
         self.assertTrue(plan.requests)
         for request in plan.requests:
             self.assertLessEqual(state_bytes(request.state), PAIR_STATE_BUDGET_CHARS)
+            self.assertLessEqual(state_tokens(request.state), PAIR_STATE_TOKEN_BUDGET)
 
     def test_escape_heavy_chunk_states_stay_inside_the_measured_budget(self):
         escaped = ('"\\\r\n\x01' * 60_000)
@@ -478,7 +491,8 @@ class AggregationTests(unittest.TestCase):
         assert_evidence(self, judgment, "whole")
 
     def test_certified_both_directions_is_a_duplicate(self):
-        a, b = artifact("a", filler(130_000, "a")), artifact("b", filler(40_000, "b"))
+        a = artifact("a", "a" + " " * 79_999)
+        b = artifact("b", "b" + " " * 79_999)
         plan = chunked_plan(a.text, b.text)
         answers = chunk_answers(
             plan, containment=lambda request: 0.93 if request.containment == "a_in_b" else 0.95)
@@ -501,7 +515,8 @@ class AggregationTests(unittest.TestCase):
                          "an unmeasured direction is never inferred")
 
     def test_certified_containment_outranks_a_non_conflicting_disagreement(self):
-        a, b = artifact("a", filler(130_000, "a")), artifact("b", filler(40_000, "b"))
+        a = artifact("a", "a" + " " * 79_999)
+        b = artifact("b", "b" + " " * 79_999)
         plan = chunked_plan(a.text, b.text)
         judgment = aggregate_pair(plan, a, b, chunk_answers(plan, relation="same_class"),
                                   model="jev-test")
@@ -630,7 +645,8 @@ class AggregationTests(unittest.TestCase):
                                    [whole_answers(), whole_answers()], model="jev-test")
 
     def test_certified_chunked_judgment_authorizes_through_the_graph(self):
-        a, b = artifact("a", filler(130_000, "a")), artifact("b", filler(40_000, "b"))
+        a = artifact("a", "a" + " " * 79_999)
+        b = artifact("b", "b" + " " * 79_999)
         plan = chunked_plan(a.text, b.text)
         judgment = aggregate_pair(plan, a, b, chunk_answers(plan), model="jev-test")
         edge = build_graph([a, b], [judgment]).edge("a", "b")

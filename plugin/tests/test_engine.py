@@ -40,10 +40,12 @@ from plugin import engine as engine_module
 from plugin import state as state_module
 from plugin.candidates import generate_candidates
 from plugin.models import CandidatePair, MergePlan, Settings, SkillArtifact
-from plugin.questions import PAIR_STATE_BUDGET_CHARS, state_bytes
+from plugin.questions import (
+    PAIR_STATE_BUDGET_CHARS, PAIR_STATE_TOKEN_BUDGET, state_bytes, state_tokens,
+)
 from plugin.transport import JevResponse
 
-CONTRACT_VERSION = "skill-relations-v2"
+CONTRACT_VERSION = "skill-relations-v3"
 
 
 # --- fixtures -------------------------------------------------------------------------
@@ -442,6 +444,7 @@ class ChunkedEvidenceTests(unittest.TestCase):
         self.assertEqual(judgment["preservation_b_in_a"], 0.0)
         for state, questions in zip(h.request_states, h.request_questions):
             self.assertLessEqual(state_bytes(state), PAIR_STATE_BUDGET_CHARS)
+            self.assertLessEqual(state_tokens(state), PAIR_STATE_TOKEN_BUDGET)
             self.assertEqual(state["skill_b"], "B" * 10_000)
             self.assertEqual(state["skill_b_scope"], "complete")
             self.assertTrue(state["skill_a_scope"].startswith("part "))

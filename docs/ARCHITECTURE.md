@@ -39,14 +39,15 @@ stored plan and cache entry goes stale on the next run. `deterministic_relation(
 baseline only — it proposes, it never authorizes a mutation, and it is carried through reports
 next to every Jev judgment so the two can be compared.
 
-### 2. Jev typed judgments — implemented; live endpoint not yet exercised
+### 2. Jev typed judgments — implemented and live-exercised
 
-`plugin/questions.py` freezes contract `skill-relations-v2`: one `relation` choice with eight
+`plugin/questions.py` freezes contract `skill-relations-v3`: one `relation` choice with eight
 criteria (`duplicate`, `a_subset_of_b`, `b_subset_of_a`, `same_class`, `complementary`,
 `conflict`, `unrelated`, `insufficient_evidence`), plus typed coverage, containment, conflict,
 and same-class nouls. Pair state is never truncated.
 
-If both redacted packages fit the measured 160k-byte state budget, one whole-pair request asks the
+If both redacted packages fit the measured 160k-byte state ceiling and conservative token budget,
+one whole-pair request asks the
 unchanged six-question contract. Otherwise the planner evaluates each plannable containment
 direction separately: the candidate being absorbed is split at package-file markers, then
 Markdown headings, then fixed-overlap hard boundaries, while the proposed containing side travels
