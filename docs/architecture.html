@@ -170,7 +170,7 @@
     <div>
       <p class="eyebrow">Hermes Agent standalone plugin · v0.1.0</p>
       <h1>hermes-<span>jev-curator</span></h1>
-      <p class="lede">A typed semantic-governance layer around Hermes Curator: deterministic candidates, byte-and-token-bounded whole/chunk planning, fail-closed aggregation, direct-edge plans, an offline mutation guard, and an explicitly gated archive-only apply path. Hermes keeps ownership of skills, snapshots, provenance, and the mutation ledger.</p>
+      <p class="lede">A typed semantic-governance layer around Hermes Curator: a profile-scoped 60-second lifecycle debounce, deterministic candidates, byte-and-token-bounded whole/chunk planning, fail-closed aggregation, direct-edge plans, an offline mutation guard, and an explicitly gated archive-only apply path. Hermes keeps ownership of skills, snapshots, provenance, and the mutation ledger.</p>
       <nav aria-label="Page sections">
         <a href="#system">System map</a>
         <a href="#integrations">Hermes seams</a>
@@ -201,6 +201,7 @@
             <ul class="arch-list">
               <li class="arch-node"><strong>Plugin manager + PluginContext</strong><small>discover · load · register · unload</small></li>
               <li class="arch-node"><strong>Curator fork</strong><small>platform=curator · skills toolset</small></li>
+              <li class="arch-node"><strong>Skill lifecycle events</strong><small>successful mutations reset a profile-local 60s timer</small></li>
               <li class="arch-node"><strong>CLI + /jev-curator</strong><small>terminal command and dry-only chat command</small></li>
               <li class="arch-node"><strong>Host config</strong><small>settings are re-read on every call</small></li>
             </ul>
@@ -213,7 +214,7 @@
               <p>Standalone · standard library only · no core edits</p>
             </header>
             <div class="arch-controls">
-              <div class="arch-node"><strong>Registration facade</strong><small>tool · prompt · hooks · commands</small></div>
+              <div class="arch-node"><strong>Registration facade</strong><small>tool · prompt · hooks · 60s debounce · commands</small></div>
               <div class="arch-node"><strong>Commands + service</strong><small>status · scan · graph · plan · run</small></div>
               <div class="arch-node"><strong>Settings boundary</strong><small>off · observe · guard · apply</small></div>
             </div>
@@ -306,17 +307,17 @@
   <section id="integrations">
     <div class="section-head">
       <h2>Hermes integration seams</h2>
-      <p>A companion to stock Curator, not a replacement scheduler. Everything rides stock plugin APIs; there are no core patches or monkeypatches.</p>
+      <p>A companion to stock Curator, not a replacement idle scheduler. The 60-second debounce is a pragmatic workaround over the current per-event <code>on_skill_lifecycle</code> seam. The cleaner long-term host API would emit one hook after all lifecycle actions in a burst finish; an amicable upstream feature request is planned. Until then, autonomous refresh needs no core patch.</p>
     </div>
     <div class="panel seam-grid">
-      <article class="seam"><b>Scheduling boundary</b><p>Hermes Curator owns the idle timer and managed population. Curator is enabled by default; its LLM consolidation fork requires <code>curator.consolidate: true</code> or a one-off <code>hermes curator run --consolidate</code>.</p></article>
+      <article class="seam"><b>Scheduling boundary</b><p>Hermes Curator owns its idle timer and managed population. Separately, successful skill mutations reset the plugin's profile-local 60-second debounce; loads are ignored and bursts collapse into one dry run.</p></article>
       <article class="seam"><b>Runtime handshake</b><p>Core creates the fork with <code>platform="curator"</code> and the <code>skills</code> toolset. The plugin automatically adds its read-only relation tool and Curator-only evidence prompt there.</p></article>
-      <article class="seam"><b>Guard sequence</b><p>In guard/apply mode, <code>hermes jev-curator run</code> first replaces the local hash-bound plans; the later core consolidation fork is checked locally by <code>pre_tool_call</code>, with no network inside the hook.</p></article>
+      <article class="seam"><b>Guard sequence</b><p>With egress consent, the debounce calls <code>run(apply=False)</code>; in guard/apply mode it refreshes local hash-bound plans automatically. The later core fork is checked locally by <code>pre_tool_call</code>, with no network inside the guard.</p></article>
       <article class="seam"><b>Scope boundary</b><p>The hook governs the LLM fork's background <code>skill_manage</code> calls, not core's deterministic age-based stale/archive transitions. Plugin <code>run --apply</code> is a separate terminal-only archive path.</p></article>
       <article class="seam"><b>Manifest</b><p><code>kind: standalone</code>, manifest v2, one tool and two hooks. Doctor/validate compare declarations with a recording execution of <code>register(ctx)</code>.</p></article>
       <article class="seam"><b>Skills toolset</b><p><code>jev_skill_relations</code> joins <code>toolset="skills"</code>, so the curator fork can request typed relations without gaining a mutation surface.</p></article>
       <article class="seam"><b>System prompt</b><p>A callable prompt section renders only when <code>session_info.platform == "curator"</code>. CLI, gateway, and unrelated agents receive nothing.</p></article>
-      <article class="seam"><b>Hooks</b><p><code>on_skill_lifecycle</code> records bounded facts. <code>pre_tool_call</code> guards only background-review <code>skill_manage</code> writes in guard/apply modes, locally and without network.</p></article>
+      <article class="seam"><b>Hooks</b><p><code>on_skill_lifecycle</code> records facts and resets the dry-run timer after mutations. It preserves profile home + credential scope, retries a busy claim, and cancels pending work on unload. <code>pre_tool_call</code> remains local.</p></article>
       <article class="seam"><b>Commands</b><p><code>hermes jev-curator …</code> uses the CLI subtree; <code>/jev-curator</code> is async and dry-only. Chat cannot pass the apply gate.</p></article>
       <article class="seam"><b>Config</b><p><code>ctx.get_config</code> reads <code>plugins.entries.jev-curator.settings.*</code> on every call. Invalid modes fall back to observe, never apply.</p></article>
       <article class="seam"><b>Core reads</b><p><code>skill_usage</code>, <code>skill_utils</code>, cron references, and eligibility predicates define the inventory and protected population. The plugin does not copy core allowlists.</p></article>
@@ -334,8 +335,9 @@
     <div class="flows">
       <article class="flow">
         <h3 style="color:var(--blue)">Observe path</h3>
+        <div class="step"><strong>Mutation → quiet minute</strong><small>Successful mutations reset one timer per profile; manual commands bypass the wait.</small></div>
         <div class="step"><strong>Inventory + candidates</strong><small>Deterministic and local.</small></div>
-        <div class="step guard"><strong>Consent gate</strong><small>No request unless mode is not off and content egress is explicitly enabled.</small></div>
+        <div class="step guard"><strong>Consent gate</strong><small>No request or automatic run unless mode is not off and <code>allow_content_egress: true</code>.</small></div>
         <div class="step"><strong>Whole/chunk request plan</strong><small>Serialized bytes, estimated tokens, and request count are bounded before calls; impossible or over-budget pairs stay local.</small></div>
         <div class="step"><strong>Typed Jev evidence</strong><small>Every planned chunk must answer; malformed or nonfinite evidence fails the pair.</small></div>
         <div class="step"><strong>Fail-closed aggregation</strong><small>Minimum preservation/coverage, maximum conflict, and zero for unmeasured directions.</small></div>
@@ -343,7 +345,7 @@
       </article>
       <article class="flow">
         <h3 style="color:var(--violet)">Guard path</h3>
-        <div class="step"><strong>Validated plans installed</strong><small>Exact digests, canonical, member, and direct edge.</small></div>
+        <div class="step"><strong>Validated plans installed</strong><small>Automatic dry refresh or immediate manual run; exact digests, canonical, member, and direct edge.</small></div>
         <div class="step guard"><strong>pre_tool_call fires</strong><small>Only for background-review <code>skill_manage</code>.</small></div>
         <div class="step"><strong>Local inventory re-check</strong><small>No network call inside the hook.</small></div>
         <div class="step stop"><strong>Block by default</strong><small>Only an exact authorized absorption passes. Content edits and stale hashes are refused.</small></div>
@@ -372,6 +374,7 @@
       <div class="invariant"><strong>Core owns protection</strong><span>Eligibility, provenance, references, snapshots, ledger, archive, restore, and rollback come from Hermes.</span></div>
       <div class="invariant"><strong>No hard delete</strong><span>The only destructive action is a recoverable archive through core's background-review path.</span></div>
       <div class="invariant"><strong>Fail-closed guard</strong><span>Stale plans, ambiguous names, mismatched paths, protected artifacts, content edits, and hook errors block.</span></div>
+      <div class="invariant"><strong>Timer stays dry</strong><span>Automation requires explicit egress consent, preserves profile scope, always passes <code>apply=false</code>, and is cancelled on unload.</span></div>
     </div>
     <div class="note"><strong>Measured boundary:</strong> wiring, safety behavior, and live whole/chunk transport are verified. The live run is an integration smoke test; Jev semantic quality and apply behavior against a production skill library remain intentionally unclaimed.</div>
   </section>
@@ -382,7 +385,7 @@
       <p>Concrete gates run against the installed v0.1.0 tree.</p>
     </div>
     <div class="panel evidence">
-      <div class="metric"><strong>303 + 69</strong><span>tests + subtests passed</span></div>
+      <div class="metric"><strong>310 + 69</strong><span>tests + subtests passed</span></div>
       <div class="metric"><strong>21 / 21</strong><span>synthetic corpus labels correct</span></div>
       <div class="metric"><strong>0</strong><span>false merge authorizations</span></div>
       <div class="metric"><strong>3</strong><span>explicit evidence modes: whole · chunked · unavailable</span></div>

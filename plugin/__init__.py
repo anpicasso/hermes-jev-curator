@@ -3,7 +3,7 @@
 Registers exactly:
   * the ``jev_skill_relations`` tool in the ``skills`` toolset (read-only judgments);
   * a curator-platform-only system prompt section;
-  * an ``on_skill_lifecycle`` observer that appends facts to the plugin audit log;
+  * an ``on_skill_lifecycle`` observer that audits mutations and debounces automatic dry runs;
   * the top-level ``hermes jev-curator`` CLI command and the ``/jev-curator`` slash command,
     parsed and rendered by ``plugin/commands.py`` over the ``plugin/service.py`` facade.
 
@@ -68,6 +68,7 @@ _CURATOR_SECTION = (
 
 _CTX: Any = None
 _CTX_CONFIG_OK: bool | None = None
+_DEBOUNCER: Any = None
 
 
 # -- handlers --------------------------------------------------------------------
@@ -95,11 +96,15 @@ def _tool_payload(args: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _on_skill_lifecycle(**event: Any) -> None:
-    """Observer: append the fact to the plugin audit log; mutate nothing, never raise."""
+    """Audit lifecycle facts and debounce a profile-scoped dry run; never raise."""
     try:
-        if not str(event.get("action") or "").strip() or not str(event.get("skill_name") or "").strip():
+        action = str(event.get("action") or "").strip()
+        if not action or not str(event.get("skill_name") or "").strip():
             return
-        _service().lifecycle(**event)
+        service = _service()
+        service.lifecycle(**event)
+        if _DEBOUNCER is not None:
+            _DEBOUNCER.notify(action, service=service)
     except Exception:
         logger.debug("jev-curator lifecycle observer failed", exc_info=True)
 
@@ -168,9 +173,14 @@ def _describe(exc: BaseException) -> str:
 
 def register(ctx: Any) -> None:
     """Register Jev relation evidence and the opt-in background mutation guard."""
-    global _CTX, _CTX_CONFIG_OK
+    global _CTX, _CTX_CONFIG_OK, _DEBOUNCER
     _CTX = ctx
     _CTX_CONFIG_OK = None
+    if _DEBOUNCER is not None:
+        _DEBOUNCER.close()
+    from .debounce import LifecycleDebouncer
+    _DEBOUNCER = LifecycleDebouncer(_service)
+    ctx.on_unload(_DEBOUNCER.close)
     ctx.register_tool(
         name=TOOL_NAME, toolset=TOOLSET, schema=TOOL_SCHEMA, handler=_tool_handler,
         description="Read-only Jev relation judgments between curator-managed skills",

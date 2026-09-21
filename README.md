@@ -33,11 +33,27 @@ This plugin adds a typed layer in front of it:
 
 ## Hermes Curator integration
 
-This plugin complements stock Hermes Curator; it does **not** replace its scheduler or run on its
-own timer. Core Curator owns the managed-skill population, idle schedule, consolidation agent,
-snapshots, `skill_manage`, archive ledger, and rollback. Its LLM consolidation pass is off by
-default even though Curator itself is enabled by default. This is the core
-`curator.consolidate` setting, separate from the plugin settings:
+This plugin complements stock Hermes Curator; it does **not** replace core's idle scheduler or
+mutation machinery. Core still owns the managed-skill population, consolidation agent, snapshots,
+`skill_manage`, archive ledger, and rollback. The plugin adds an event-driven refresh: every
+successful create/install/edit/archive/restore/stale lifecycle mutation resets a **profile-local
+60-second debounce**. After one quiet minute it runs `run(apply=False)` automatically when
+`mode` is not `off` and `allow_content_egress: true`. Repeated mutations collapse into one run;
+profiles remain isolated; a busy profile claim retries after another minute; plugin unload cancels
+pending timers. Mere skill loads do not schedule work.
+
+**Compatibility note:** the one-minute debounce is a pragmatic workaround over Hermes' current
+per-event `on_skill_lifecycle` seam, not a replacement for core. The cleaner long-term API would be
+one host hook after Hermes has finished all lifecycle actions in a burst. We intend to propose that
+small upstream feature amicably; until then, the debounce provides autonomous refresh without a
+core patch.
+
+The timer preserves the originating profile's `$HERMES_HOME` and credential scope. Automatic runs
+**never apply or archive skills**, even in `apply` mode: `observe` refreshes evidence/reports, while
+`guard` and `apply` also replace `guard_plans.json` with fresh hash-bound plans.
+
+Core's LLM consolidation pass is off by default even though Curator itself is enabled by default.
+This is the core `curator.consolidate` setting, separate from the plugin settings:
 
 ```yaml
 curator:
@@ -51,13 +67,13 @@ plugin then automatically:
 
 - adds the read-only `jev_skill_relations` tool to that toolset;
 - injects a Curator-only prompt requiring typed evidence before merges or absorptions;
-- records skill lifecycle events; and
+- records skill lifecycle events and schedules the debounced dry refresh; and
 - in `guard`/`apply` mode, checks background `skill_manage` mutations with the local
   `pre_tool_call` hook.
 
-The plugin's commands are a separate evidence/control path. In `guard` or `apply` mode, run
-`hermes jev-curator run` first to replace the local `guard_plans.json` authorization store with
-fresh hash-bound plans, then preview or run core consolidation:
+The plugin's commands are the immediate evidence/control path. After the quiet-minute refresh,
+core consolidation can use the fresh local plans directly; run `hermes jev-curator run` manually
+only when you do not want to wait for the debounce:
 
 ```bash
 hermes jev-curator run
@@ -78,7 +94,7 @@ It does not change Hermes Curator's deterministic age-based stale/archive transi
 | component | state |
 |---|---|
 | inventory, candidate generation, question contract, transport | implemented, unit-tested |
-| plugin manifest + `register(ctx)` (tool / prompt / lifecycle + guard hooks / commands) | implemented; `doctor` + `validate` pass; real-load verified |
+| plugin manifest + `register(ctx)` (tool / prompt / lifecycle debounce + guard hooks / commands) | implemented; `doctor` + `validate` pass; real-load verified |
 | graph, plans, state (audit / cache / lock / reports), `run --apply` | implemented and unit-tested; no production-library apply has been run |
 | live Jev endpoint | exercised end-to-end with whole and multi-request chunked evidence; no model-quality claim |
 | frozen offline benchmark (`benchmarks/`) | 21 synthetic relation/adversarial cases; self-check only, not a live-model quality claim |
@@ -92,7 +108,8 @@ monkeypatched; nothing in this tree requires a core change.
 |---|---|
 | `tools.skill_usage` | `curated_report()` / `usage_report()` rows, `provenance()`, `is_curation_eligible()` |
 | `agent.skill_utils` | `iter_skill_index_files()`, `parse_frontmatter()` |
-| `hermes_constants` | `get_hermes_home()` |
+| `hermes_constants` | active-profile home plus context-local binding for delayed runs |
+| `agent.secret_scope` | preserve the originating profile's credential scope across the timer thread |
 | `cron.jobs` | `referenced_skill_names()` — cron-referenced skills are flagged protected |
 | `hermes_cli.runtime_provider` | credential resolution through Hermes' provider pool |
 | `hermes_cli.config` | `get_env_value_prefer_dotenv()` credential fallback |
@@ -111,10 +128,10 @@ to a write mode.
 
 | mode | behavior today |
 |---|---|
-| `off` | no Jev requests (inventory, candidates, and the deterministic baseline only) |
-| `observe` (default) | judgments + plans + reports; no skill mutation of any kind |
-| `guard` | installs current hash-bound relation plans and blocks background destructive `skill_manage` calls that are not an exact authorized absorption; foreground calls remain untouched |
-| `apply` | unlocks `hermes jev-curator run --apply` (terminal only): archives sources of complete direct-edge, hash-bound plans via ledgered `skill_manage`, after a snapshot and digest re-check; requires core's `_archived` confirmation and verifies each source disappeared while the canonical stayed unchanged; refuses while `skills.write_approval` is enabled |
+| `off` | no Jev requests and no automatic lifecycle run (inventory, candidates, and the deterministic baseline remain available manually) |
+| `observe` (default) | judgments + plans + reports; consented lifecycle mutations trigger the 60-second dry refresh; no skill mutation of any kind |
+| `guard` | the dry refresh installs current hash-bound relation plans and blocks background destructive `skill_manage` calls that are not an exact authorized absorption; foreground calls remain untouched |
+| `apply` | automatic refreshes remain dry; only explicit terminal `hermes jev-curator run --apply` archives sources of complete direct-edge, hash-bound plans via ledgered `skill_manage`, after a snapshot and digest re-check; requires core's `_archived` confirmation and verifies each source disappeared while the canonical stayed unchanged; refuses while `skills.write_approval` is enabled |
 
 ## Install
 
@@ -239,8 +256,9 @@ python3 -m pytest plugin/tests -q     # unit suite (determinism, graph gates, st
 
 ## Network egress and data handling
 
-The only network egress is the decision request itself. It is POSTed to the configured endpoint
-only when `mode` is not `off` **and** `allow_content_egress: true`. The default is no egress.
+The only network egress is the decision request itself. Manual and lifecycle-debounced requests are
+POSTed to the configured endpoint only when `mode` is not `off` **and**
+`allow_content_egress: true`. The default is no egress and no automatic run.
 
 - **What leaves the machine after consent:** one bounded state containing redacted skill names and
   either both complete packages or one complete package plus one labeled chunk, plus the question
@@ -265,6 +283,8 @@ only when `mode` is not `off` **and** `allow_content_egress: true`. The default 
   returns the snapshot plus exact `hermes curator restore <name>` recovery commands.
 - **No chat-driven mutation.** `/jev-curator run --apply` is refused; apply needs a terminal,
   `mode: apply`, and validated plans whose digests still match.
+- **No timer-driven mutation.** Lifecycle debounce always calls `run(apply=False)`; it may refresh
+  evidence and local guard authorization, never archive or rewrite a skill.
 - **No stale application.** If any affected skill package changed after judgment, apply refuses
   and asks for a rescan. After every archive it re-reads only that source and canonical, requires
   the source to be gone, and requires the canonical digest to remain unchanged.

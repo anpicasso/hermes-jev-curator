@@ -18,18 +18,30 @@ snapshot was also exercised against TypeSafe with whole, chunked, and locally un
 
 ### Hermes Curator runtime handshake
 
-The plugin is not a second scheduler. Stock Hermes Curator remains the owner of idle scheduling,
+The plugin does not replace the stock idle scheduler. Hermes Curator remains the owner of
 managed-skill eligibility, the consolidation fork, snapshots, mutation ledger, archive, restore,
-and rollback. Curator is enabled by default; its LLM consolidation fork is separately opt-in with
+and rollback. The plugin adds a separate event-driven refresh: successful skill mutations reset a
+profile-local 60-second debounce. After one quiet minute, and only when mode is not `off` plus
+content egress is explicitly enabled, it runs `CuratorService.run(apply=False)`. Loads are ignored;
+bursts coalesce; profiles keep independent timers and credential scopes; a busy claim retries after
+another minute; unload cancels pending work. Automatic runs never take the apply path.
+
+This debounce is a pragmatic workaround over Hermes' current per-event `on_skill_lifecycle` seam.
+The cleaner long-term host API would emit one hook after all lifecycle actions in a burst have
+finished. An amicable upstream feature request is planned; until such a seam exists, the debounce
+provides autonomous refresh without a core patch.
+
+Curator is enabled by default; its LLM consolidation fork is separately opt-in with
 `curator.consolidate: true` or per invocation with `hermes curator run --consolidate`.
 
 The core fork is constructed with `platform="curator"` and `enabled_toolsets=["skills"]`. Plugin
 registration therefore contributes `jev_skill_relations` to the fork's existing toolset and emits
-its evidence instructions only into that fork's system prompt. `observe` stops there. In
-`guard`/`apply`, a prior `hermes jev-curator run` atomically replaces `guard_plans.json` with fresh
-hash-bound plans; the local `pre_tool_call` hook then checks background-review `skill_manage`
-mutations without network access. Only an exact planned archive into an existing canonical can
-pass; proposed content bytes are not certified by pair evidence and remain blocked.
+its evidence instructions only into that fork's system prompt. In `observe`, the debounce refreshes
+evidence and reports. In `guard`/`apply`, it also atomically replaces `guard_plans.json` with fresh
+hash-bound plans; `hermes jev-curator run` forces the same dry refresh immediately. The local
+`pre_tool_call` hook then checks background-review `skill_manage` mutations without network access.
+Only an exact planned archive into an existing canonical can pass; proposed content bytes are not
+certified by pair evidence and remain blocked.
 
 The terminal-only `hermes jev-curator run --apply` path is separate from the core consolidation
 fork: it applies already-preserved direct-edge plans through core's snapshot and ledgered archive
@@ -104,9 +116,9 @@ retry on 429/529/5xx, same-origin-only redirect policy. Credentials resolve thro
 passes through core's redactor before egress; a missing/failed redactor refuses the request.
 
 `plugin/engine.py` walks candidate pairs in rank order and charges `max_requests` by planned Jev
-requests, not pairs. A byte/token lower bound refuses pairs that cannot fit the remaining per-operation
-request budget before chunk materialization. If that bound fits, the exact chunk count is checked after
-materialization and before any request is sent. Scans report refusals in `scan["skipped"]`, and
+requests, not pairs. A byte/token lower bound can refuse an obviously impossible pair before chunk
+materialization. If that bound fits, the exact chunk count is checked after materialization and before
+any request is sent. Scans report refusals in `scan["skipped"]`, and
 explicit pair reviews return a bounded error. No partial request set is sent; later cache hits and
 cheaper pairs may still be used. Requests within one pair are sequential, while different pairs
 keep the four-worker pool.
@@ -181,12 +193,12 @@ All seams are stock plugin APIs — no core edits, no monkeypatching.
 | manifest | `kind: standalone`, `manifest_version: 2`, list-form `provides_tools` / `provides_hooks`; `validate` diffs the declaration against a recording run of `register(ctx)` | `hermes plugins validate plugin` passes, including the capability probe and security scan |
 | tool | `jev_skill_relations` registered with `toolset="skills"` so it merges into the built-in skills toolset the curator fork sees | `get_toolset("skills")` includes it; a no-network call returned a bounded JSON payload |
 | system prompt | `register_system_prompt_section` with a callable gated on `session_info["platform"] == "curator"` — the curator contract reaches the fork and no other surface | rendered for `platform="curator"`, absent for `platform="cli"` |
-| hooks | `on_skill_lifecycle` appends facts; `pre_tool_call` gates only background-review `skill_manage` in `guard`/`apply`, using local hash-bound plans and no network | both callbacks present after real discovery; foreground and observe mode stay inert in tests |
+| hooks | `on_skill_lifecycle` appends facts and resets the profile-local 60-second dry-run debounce after mutations; `pre_tool_call` gates only background-review `skill_manage` in `guard`/`apply`, using local hash-bound plans and no network | both callbacks present after real discovery; loads, missing egress consent, foreground writes, and timer-driven apply stay inert in tests |
 | commands | `register_cli_command` (`hermes jev-curator …`) and `register_command` (`/jev-curator`), both parsed by `plugin/commands.py` | `commands_registered: ['jev-curator']` on real load |
 | config | `ctx.get_config(...)` → `plugins.entries.jev-curator.settings.*`, re-read per call. The model setting is named `jev_model` because `model` is a host-reserved root | probed: `mode`/`provider`/`base_url`/`key_env`/`top_k`/`jev_model` survive |
 | state | `$HERMES_HOME/jev-curator/`: `audit.jsonl` (0600, one rotation, redacted, byte-bounded), `state.json`, `relations.json` cache, `guard_plans.json`, `claim.lock` (O_EXCL, dead-owner recovery), `reports/*.json`. It always follows the active profile and never lives inside `skills/` | path resolution and core-file refusal are unit-tested |
 | execution | `ctx.dispatch_tool("skill_manage", …)` for the archival mutation, write origin `background_review` | registry dispatch does **not** run `pre_tool_call` hooks, so apply repeats the same digest/edge/protection gates before snapshot and dispatch |
-| unload | registration handles; no `atexit` | unloading the plugin removed its tool, hook, section, and command |
+| unload | registration handles plus `ctx.on_unload` timer cancellation; no `atexit` | unloading removes registered surfaces and cancels pending automatic runs |
 
 Notes that matter:
 
@@ -235,6 +247,8 @@ Notes that matter:
     write core-owned files (`skills/.usage.json`, `skills/.curator_state`).
 12. **Mode safety.** Unknown or malformed `mode` falls back to `observe`, never to `apply`.
 13. **Core untouched.** Everything rides stock seams; no core file is modified.
+14. **Debounced runs stay dry.** Lifecycle automation requires explicit egress consent, preserves
+    profile home and credential scope across the timer thread, and always passes `apply=False`.
 
 ## Failure semantics
 
@@ -249,13 +263,16 @@ Notes that matter:
 - **Apply:** stops on the first failed mutation and reports the snapshot, what was applied, and
   exact `hermes curator restore <name>` commands for already-archived sources.
 - **Audit/state writes** never change a verdict (best-effort, DEBUG-logged failures).
+- **Lifecycle debounce:** mutation bursts collapse into one profile-local run after 60 quiet
+  seconds. A held claim reschedules after 60 seconds; unload cancels pending timers. Scope-capture
+  failure refuses to schedule rather than risk the wrong profile or credentials.
 
 ## Roadmap and kill criteria
 
 ### Delivered — wire-up and bounded long-pair evidence
 
 Manifest + registration, `jev_skill_relations` tool in the skills toolset, curator-gated prompt
-section, lifecycle observer, offline `pre_tool_call` mutation guard, `hermes jev-curator` /
+section, profile-scoped 60-second lifecycle debounce, offline `pre_tool_call` mutation guard, `hermes jev-curator` /
 `/jev-curator` commands, graph + plans, state/cache/audit/reports, gated `run --apply`, and the v3
 whole/chunked/unavailable evidence planner. Unit suite in `plugin/tests/`; `doctor` + `validate`
 pass; the live TypeSafe route and an installed real-library scan have been exercised.

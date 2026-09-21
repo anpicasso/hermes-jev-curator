@@ -36,6 +36,7 @@ class StubContext:
 
     def __init__(self, config=None):
         self.calls = []
+        self.unloads = []
         self.config = dict(config or {})
 
     def register_tool(self, **kwargs):
@@ -52,6 +53,9 @@ class StubContext:
 
     def register_command(self, name, handler, **kwargs):
         self.calls.append(("slash", {"name": name, "handler": handler, **kwargs}))
+
+    def on_unload(self, callback):
+        self.unloads.append(callback)
 
     def get_config(self, key, default=None):
         return self.config.get(key, default)
@@ -136,6 +140,7 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(self.ctx.of("slash")[0]["name"], "jev-curator")
         section = self.ctx.of("section")[0]
         self.assertEqual((section["id"], section["position"]), ("jev-curator", "after_memory"))
+        self.assertEqual(len(self.ctx.unloads), 1)
 
     @unittest.skipUnless(yaml, "PyYAML unavailable")
     def test_manifest_matches_registration(self):
@@ -194,13 +199,16 @@ class RegistrationTests(unittest.TestCase):
 
     def test_observer_records_and_never_raises(self):
         service = FakeService()
-        with mock.patch.object(plugin, "_service", lambda: service):
+        notifier = mock.Mock()
+        with mock.patch.object(plugin, "_service", lambda: service), \
+             mock.patch.object(plugin, "_DEBOUNCER", notifier):
             plugin._on_skill_lifecycle(action="patched", skill_name="x", task_id="t", session_id="s")
             for event in ({}, {"action": "", "skill_name": "x"}, {"action": "patched"}, None):
                 if event is not None:
                     plugin._on_skill_lifecycle(**event)
         self.assertEqual([row["skill_name"] for row in service.events], ["x"])
         self.assertEqual(service.events[0]["action"], "patched")
+        notifier.notify.assert_called_once_with("patched", service=service)
         with mock.patch.object(plugin, "_service", lambda: BoomService()):
             plugin._on_skill_lifecycle(action="patched", skill_name="x")  # must not raise
 

@@ -1,6 +1,6 @@
 name: jev-curator
 version: 0.1.0
-description: "Typed Jev relation judgments and a local mutation guard for curator-managed skills, with an observe-by-default command surface and explicitly gated apply mode."
+description: "Typed Jev relation judgments, a lifecycle-debounced dry refresh, and a local mutation guard for curator-managed skills, with explicitly gated apply mode."
 author: "Angello Picasso"
 license: MIT
 homepage: "https://github.com/anpicasso/hermes-jev-curator"
