@@ -37,7 +37,7 @@ def empty_scan(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "ok": True, "mode": "observe", "contract_version": CONTRACT_VERSION,
         "inventory": [], "candidates": [], "baseline": {}, "judgments": [],
-        "errors": [], "latency_ms": 1,
+        "skipped": [], "errors": [], "latency_ms": 1,
     }
     payload.update(overrides)
     return payload
@@ -163,7 +163,10 @@ class ServiceTestCase(unittest.TestCase):
 
 class RunDryTests(ServiceTestCase):
     def test_observe_run_is_dry_and_records_bounded_artifacts(self):
-        engine = StubEngine(scan=self.payload(), plans=[make_plan()])
+        payload = self.payload()
+        payload["skipped"] = [{"pair": "gamma::omega", "reason": "request-budget",
+                               "requests": 3}]
+        engine = StubEngine(scan=payload, plans=[make_plan()])
         service = self.make_service(mode="observe", engine=engine)
 
         result = service.run()
@@ -176,10 +179,13 @@ class RunDryTests(ServiceTestCase):
                          {"ok": True, "applied": [], "message": "observe-only; no skill mutations"})
         self.assertEqual((result["inventory_count"], result["candidate_count"], result["judgment_count"]),
                          (1, 1, 1))
+        self.assertEqual(result["skipped_count"], 1)
+        self.assertEqual(result["skipped"], payload["skipped"])
 
         summary = state.load_state()["last_run"]
         self.assertEqual(set(summary), {"run_id", "ok", "mode", "finished_at", "inventory_count",
-                                        "candidate_count", "judgment_count", "applied_count"})
+                                        "candidate_count", "judgment_count", "skipped_count",
+                                        "applied_count"})
         self.assertEqual(summary["mode"], "observe")
         self.assertEqual(summary["applied_count"], 0)
         self.assertEqual(summary["finished_at"], result["finished_at"])
@@ -196,6 +202,7 @@ class RunDryTests(ServiceTestCase):
         self.assertEqual(report["plans"][0]["plan_id"], "merge-abc123")
         self.assertEqual(report["plans"][0]["absorbed"], ["beta"])
         self.assertEqual(report["execution"]["applied"], [])
+        self.assertEqual(report["skipped"], payload["skipped"])
         self.assertLess(len(raw_report), 20_000)
 
         self.assertNotIn(SKILL_BODY, raw_report)

@@ -12,7 +12,7 @@ from typing import Any, Iterable, Mapping
 from .candidates import deterministic_relation, generate_candidates
 from .inventory import collect_inventory, digests_match
 from .models import CandidatePair, MergePlan, RelationJudgment, Settings, SkillArtifact
-from .questions import CONTRACT_VERSION, has_truncation, pair_state, relation_questions
+from .questions import CONTRACT_VERSION, PairPlan, aggregate_pair, plan_pair
 from .transport import request
 
 
@@ -46,13 +46,13 @@ class CuratorEngine:
         baseline = {pair.key: deterministic_relation(pair) for pair in pairs}
         judgments: list[RelationJudgment] = []
         errors: list[dict[str, str]] = []
+        skipped: list[dict[str, Any]] = []
         cache_hits = 0
         jev_enabled = use_jev and self.settings.mode != "off" and self.settings.allow_content_egress
         if jev_enabled:
             from .state import cached_relation, load_relation_cache, remember_relation, save_relation_cache
             from .transport import resolve_route
 
-            budgeted = pairs[: self.settings.max_requests]
             by_name = {item.name: item for item in artifacts}
             cache = load_relation_cache()
             try:
@@ -61,21 +61,36 @@ class CuratorEngine:
                 # A bad operator setting is a failed judgment run, not a crashed curator.
                 errors.append({"pair": "", "error": f"{type(exc).__name__}: {str(exc)[:240]}"})
                 model = ""
-                budgeted = []
-            pending: list[CandidatePair] = []
-            for pair in budgeted:
+                pairs_to_plan: list[CandidatePair] = []
+            else:
+                pairs_to_plan = pairs
+            spent = 0
+            pending: list[tuple[CandidatePair, PairPlan]] = []
+            for pair in pairs_to_plan:
                 cached = cached_relation(
                     cache, pair.a_digest, pair.b_digest,
                     contract_version=CONTRACT_VERSION, model=model)
-                if cached is None:
-                    pending.append(pair)
-                else:
+                if cached is not None:
                     judgments.append(cached)
                     cache_hits += 1
+                    continue
+                try:
+                    plan = plan_pair(by_name[pair.a], by_name[pair.b])
+                except Exception as exc:
+                    errors.append({"pair": pair.key,
+                                   "error": f"{type(exc).__name__}: {str(exc)[:240]}"})
+                    continue
+                cost = len(plan.requests)
+                if spent + cost > max(0, int(self.settings.max_requests)):
+                    skipped.append({"pair": pair.key, "reason": "request-budget",
+                                    "requests": cost})
+                    continue
+                spent += cost
+                pending.append((pair, plan))
             with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, max(1, len(pending)))) as pool:
                 futures = {
-                    pool.submit(self._judge_pair, pair, by_name[pair.a], by_name[pair.b]): pair
-                    for pair in pending
+                    pool.submit(self._judge_pair, pair, by_name[pair.a], by_name[pair.b], plan): pair
+                    for pair, plan in pending
                 }
                 for future in as_completed(futures):
                     pair = futures[future]
@@ -99,6 +114,7 @@ class CuratorEngine:
             "candidates": [asdict(pair) for pair in pairs],
             "baseline": baseline,
             "judgments": [asdict(item) for item in judgments],
+            "skipped": skipped,
             "cache_hits": cache_hits,
             "content_egress_enabled": self.settings.allow_content_egress,
             "jev_skipped": ("content egress is disabled" if use_jev and self.settings.mode != "off"
@@ -283,33 +299,17 @@ class CuratorEngine:
 
     def _judge_pair(
         self, pair: CandidatePair, a: SkillArtifact, b: SkillArtifact,
+        plan: PairPlan | None = None,
     ) -> RelationJudgment:
-        state = pair_state(a, b, self.settings.max_state_chars)
-        if has_truncation(state):
-            return RelationJudgment(
-                a=a.name, b=b.name, a_digest=a.digest, b_digest=b.digest,
-                relation="insufficient_evidence", confidence=1.0,
-                probabilities={"insufficient_evidence": 1.0}, coverage=0.0,
-                preservation_a_in_b=0.0, preservation_b_in_a=0.0, conflict=0.0,
-                contract_version=CONTRACT_VERSION,
-            )
-        response = request(state, relation_questions(), self.settings)
-        relation = response.answers["relation"]
-        return RelationJudgment(
-            a=a.name,
-            b=b.name,
-            a_digest=a.digest,
-            b_digest=b.digest,
-            relation=str(relation["choice"]),
-            confidence=float(relation["confidence"]),
-            probabilities=dict(relation.get("probabilities") or {}),
-            coverage=float(response.answers["coverage"]["noul"]),
-            preservation_a_in_b=float(response.answers["a_in_b"]["noul"]),
-            preservation_b_in_a=float(response.answers["b_in_a"]["noul"]),
-            conflict=float(response.answers["conflict"]["noul"]),
-            contract_version=CONTRACT_VERSION,
-            raw_model=response.model,
-        )
+        planned = plan or plan_pair(a, b)
+        answers: list[Mapping[str, Any]] = []
+        model = ""
+        for planned_request in planned.requests:
+            response = request(planned_request.state, planned_request.questions, self.settings)
+            answers.append(response.answers)
+            if not model:
+                model = response.model
+        return aggregate_pair(planned, a, b, answers, model=model)
 
 
 def _pair(a: SkillArtifact, b: SkillArtifact) -> CandidatePair:
@@ -329,6 +329,7 @@ def _judgment_from_mapping(raw: Mapping[str, Any]) -> RelationJudgment:
         "conflict": float(raw.get("conflict") or 0.0),
         "contract_version": str(raw.get("contract_version") or CONTRACT_VERSION),
         "raw_model": str(raw.get("raw_model") or ""),
+        "evidence": str(raw.get("evidence") or "whole"),
     })
 
 

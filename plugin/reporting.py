@@ -180,6 +180,7 @@ def _judgment_rows(report: RunReport) -> list[dict[str, Any]]:
         "conflict": _finite(item.conflict),
         "contract_version": _cell(item.contract_version),
         "raw_model": _text(item.raw_model, 80),
+        "evidence": _cell(item.evidence, 20),
     } for item in report.judgments]
 
 
@@ -257,7 +258,6 @@ def _settings_row(settings: Settings | None) -> dict[str, Any] | None:
         "max_requests": settings.max_requests,
         "max_pairs": settings.max_pairs,
         "top_k": settings.top_k,
-        "max_state_chars": settings.max_state_chars,
     }
 
 

@@ -13,7 +13,7 @@ from .transport import resolve_route
 
 _SETTING_KEYS = (
     "mode", "provider", "base_url", "jev_model", "key_env", "allow_content_egress", "timeout_seconds",
-    "max_requests", "max_pairs", "top_k", "max_state_chars",
+    "max_requests", "max_pairs", "top_k",
 )
 
 
@@ -56,6 +56,7 @@ class CuratorService:
             "edges": [asdict(edge) for edge in graph.edges],
             "authorized_edges": len(graph.authorized),
             "refusals": graph.refusal_counts(),
+            "skipped": scan.get("skipped", []),
             "errors": scan.get("errors", []),
         }
         self._audit("graph", result)
@@ -69,6 +70,7 @@ class CuratorService:
             "mode": self.settings.mode,
             "plans": [asdict(plan) for plan in plans],
             "applicable": sum(plan.applicable for plan in plans),
+            "skipped": scan.get("skipped", []),
             "errors": scan.get("errors", []),
         }
         self._audit("plan", result)
@@ -109,6 +111,8 @@ class CuratorService:
                 "inventory_count": len(scan.get("inventory", [])),
                 "candidate_count": len(scan.get("candidates", [])),
                 "judgment_count": len(scan.get("judgments", [])),
+                "skipped_count": len(scan.get("skipped", [])),
+                "skipped": scan.get("skipped", []),
                 "plans": [asdict(plan) for plan in plans],
                 "authorization": authorization,
                 "errors": scan.get("errors", []),
@@ -198,6 +202,7 @@ def _last_run(result: Mapping[str, Any], run_id: str) -> dict[str, Any]:
         "inventory_count": int(result.get("inventory_count") or 0),
         "candidate_count": int(result.get("candidate_count") or 0),
         "judgment_count": int(result.get("judgment_count") or 0),
+        "skipped_count": int(result.get("skipped_count") or 0),
         "applied_count": len(((result.get("execution") or {}).get("applied") or []))
         if isinstance(result.get("execution"), Mapping) else 0,
     }

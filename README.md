@@ -21,10 +21,11 @@ This plugin adds a typed layer in front of it:
 
 1. **Deterministic candidates.** A read-only inventory of curator-managed skills plus lexical
    top-k neighbor pairs. No model call; unchanged inputs produce identical pairs, ids, and order.
-2. **Typed judgments.** One Jev request per candidate pair answers a versioned question contract:
-   an 8-way `relation` choice (`duplicate`, `a_subset_of_b`, `b_subset_of_a`, `same_class`,
-   `complementary`, `conflict`, `unrelated`, `insufficient_evidence`) plus `coverage`,
-   preservation (`a_in_b`, `b_in_a`), `conflict`, and `same_class` probability questions.
+2. **Typed judgments.** Each candidate pair uses one bounded request when both packages fit, or
+   deterministic per-direction chunk requests otherwise. Every request answers a versioned
+   question contract: an 8-way `relation` choice (`duplicate`, `a_subset_of_b`, `b_subset_of_a`,
+   `same_class`, `complementary`, `conflict`, `unrelated`, `insufficient_evidence`) plus the
+   applicable `coverage`, preservation, and `conflict` probability questions.
 3. **Direct-edge graph.** Judgments become typed edges between skill names, bound to both
    content digests. Merge plans are star-shaped — every absorbed member needs its own direct
    containment/duplicate judgment against the canonical; A~B plus B~C never merges C into A.
@@ -116,10 +117,20 @@ plugins:
 | `key_env` | — | environment-variable name | custom endpoints only; anonymous when unset |
 | `allow_content_egress` | `false` | boolean | explicit consent required before skill text can be sent to any endpoint |
 | `timeout_seconds` | `25` | 1–120 | one overall deadline per request, retries included |
-| `max_requests` | `50` | 1–500 | per-scan request budget |
+| `max_requests` | `50` | 1–500 | per-scan request budget (chunk requests count individually) |
 | `max_pairs` | `100` | 1–2000 | per-scan candidate-pair budget |
 | `top_k` | `5` | 1–20 | lexical neighbors kept per skill |
-| `max_state_chars` | `120000` | 4000–500000 | bound on the state text sent per request |
+
+### Long pairs
+
+Pairs whose redacted package text fits the measured 160k-byte request-state budget use one
+whole-pair request. Larger pairs are split deterministically at package-file markers, then
+Markdown headings, then fixed-overlap hard boundaries; one side stays whole while every chunk of
+the other is judged. Aggregation is fail-closed (`min` preservation/coverage, `max` conflict): a
+missing or malformed chunk fails the pair, and an unmeasured containment direction is `0.0`.
+Pairs that cannot keep either containing side whole return `insufficient_evidence` without a
+network call. `max_requests` counts actual planned requests; a pair that does not fit the
+remaining budget is reported in `scan["skipped"]` and never partially judged.
 
 Endpoint presets:
 
@@ -179,15 +190,14 @@ python3 -m pytest plugin/tests -q     # unit suite (determinism, graph gates, st
 The only network egress is the decision request itself. It is POSTed to the configured endpoint
 only when `mode` is not `off` **and** `allow_content_egress: true`. The default is no egress.
 
-- **What leaves the machine after consent:** the bounded state (skill names and redacted skill text — head
-  and tail kept, middle replaced by an explicit truncation marker when over budget) plus the
-  question contract and configured model id. No package digest is sent.
+- **What leaves the machine after consent:** one bounded state containing redacted skill names and
+  either both complete packages or one complete package plus one labeled chunk, plus the question
+  contract and configured model id. No package digest is sent; package text is never truncated.
 - **Where it goes:** the configured endpoint — `https://api.typesafe.ai/v1/systemone` by
   default, `https://openrouter.ai/api/alpha/decisions` for OpenRouter, or your `custom` URL.
   A third party therefore sees your skill content unless you point `custom` at your own host.
 - **Redaction uses Hermes' own redactor** and the request fails closed if that redactor is
-  unavailable; truncation is flagged in-band. Redaction is still a hygiene measure, not a
-  confidentiality control.
+  unavailable. Redaction is still a hygiene measure, not a confidentiality control.
 - **Transport boundary:** HTTPS on port 443 only; URL credentials, query strings, and fragments
   are rejected; cross-origin redirects are refused; requests and responses are capped at 2 MB;
   retries (429/529/5xx) are bounded and share one overall deadline.

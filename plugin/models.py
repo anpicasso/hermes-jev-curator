@@ -34,7 +34,6 @@ class Settings:
     max_requests: int = 50
     max_pairs: int = 100
     top_k: int = 5
-    max_state_chars: int = 120_000
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> "Settings":
@@ -59,7 +58,6 @@ class Settings:
             max_requests=_integer(raw.get("max_requests"), 50, 1, 500),
             max_pairs=_integer(raw.get("max_pairs"), 100, 1, 2_000),
             top_k=_integer(raw.get("top_k"), 5, 1, 20),
-            max_state_chars=_integer(raw.get("max_state_chars"), 120_000, 4_000, 500_000),
         )
 
 
@@ -119,12 +117,15 @@ class RelationJudgment:
     conflict: float
     contract_version: str
     raw_model: str = ""
+    evidence: str = "whole"
 
     def __post_init__(self) -> None:
         if self.relation not in RELATIONS:
             raise ValueError(f"unknown relation: {self.relation}")
         if not 0.0 <= float(self.confidence) <= 1.0:
             raise ValueError("confidence must be in [0, 1]")
+        if self.evidence not in {"whole", "chunked", "unavailable"}:
+            raise ValueError(f"unknown evidence: {self.evidence}")
 
     @property
     def key(self) -> str:

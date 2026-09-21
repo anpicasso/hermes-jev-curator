@@ -63,7 +63,3 @@ config_schema:
     type: int
     default: 5
     description: "Lexical neighbors kept per skill (1-20)."
-  max_state_chars:
-    type: int
-    default: 120000
-    description: "Bounded package text sent to Jev per pair (4000-500000)."

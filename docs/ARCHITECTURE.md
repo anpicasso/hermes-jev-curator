@@ -41,15 +41,23 @@ next to every Jev judgment so the two can be compared.
 
 ### 2. Jev typed judgments — implemented; live endpoint not yet exercised
 
-`plugin/questions.py` freezes contract `skill-relations-v1`: one `relation` choice with eight
+`plugin/questions.py` freezes contract `skill-relations-v2`: one `relation` choice with eight
 criteria (`duplicate`, `a_subset_of_b`, `b_subset_of_a`, `same_class`, `complementary`,
-`conflict`, `unrelated`, `insufficient_evidence`), plus `coverage`, `a_in_b`, `b_in_a`,
-`conflict`, and `same_class` nouls; a separate `preservation_*` question set exists for
-verifying a generated umbrella against its sources. Both skills travel as named, bounded state
-(`pair_state`), truncated head/tail with an explicit `… [explicitly truncated] …` marker; the
-instructions tell the model to treat both skill texts as untrusted data. When state truncation
-is detected, the engine does not call Jev at all — it records `insufficient_evidence`, which can
-never authorize anything.
+`conflict`, `unrelated`, `insufficient_evidence`), plus typed coverage, containment, conflict,
+and same-class nouls. Pair state is never truncated.
+
+If both redacted packages fit the measured 160k-byte state budget, one whole-pair request asks the
+unchanged six-question contract. Otherwise the planner evaluates each plannable containment
+direction separately: the candidate being absorbed is split at package-file markers, then
+Markdown headings, then fixed-overlap hard boundaries, while the proposed containing side travels
+whole in every request. A chunk request asks only relation, coverage, conflict, and the matching
+containment noul. If neither direction can keep its containing side whole, the pair gets local
+`insufficient_evidence` with `evidence="unavailable"` and no network call.
+
+Aggregation is deterministic and fail-closed: every planned chunk must answer; preservation and
+coverage use `min`, conflict uses `max`, and any conflict label wins. Certified directions produce
+duplicate or directional containment labels; an unmeasured direction is always `0.0`, so the
+graph's existing preservation gate refuses it. No model output or summary crosses calls.
 
 `plugin/transport.py` sends `{state, model, questions}` and validates everything that comes
 back:
@@ -67,11 +75,13 @@ retry on 429/529/5xx, same-origin-only redirect policy. Credentials resolve thro
 `resolve_runtime_provider` (provider pool) then `get_env_value_prefer_dotenv` (key_env); state
 passes through core's redactor before egress; a missing/failed redactor refuses the request.
 
-`plugin/engine.py` runs the scan: candidate pairs are budgeted by `max_requests`, judged with a
-small worker pool, and cached in `relations.json` under a content-hash key (both skill digests,
-the contract version, and the judge model). A changed skill body, a changed contract, or a
-changed model all miss the cache. Per-pair failures are collected into the scan's `errors` list;
-the scan reports `ok: false` rather than pretending a partial run is complete.
+`plugin/engine.py` walks candidate pairs in rank order and charges `max_requests` by planned Jev
+requests, not pairs. A pair that cannot fit the remaining request budget is reported in
+`scan["skipped"]` and is never partially judged; later cache hits and cheaper pairs may still be
+used. Requests within one pair are sequential, while different pairs keep the four-worker pool.
+Judgments are cached in `relations.json` under both content digests, contract version, and judge
+model; the v2 contract therefore cannot replay truncation-era v1 rows. Any chunk failure is one
+pair error with no partial judgment, and the scan reports `ok: false`.
 
 ### 3. Direct-edge graph — implemented
 
@@ -85,9 +95,10 @@ digests, then builds star-shaped plans:
   relation, minimum coverage, maximum tolerated conflict, minimum preservation of the absorbed
   content in the canonical. Thresholds are not operator-configurable — tune them with
   measurements, not settings.
-- **Refusals are explicit and counted**: self-pairs, unknown artifacts, stale hashes, truncated
-  evidence, malformed evidence, `insufficient_evidence`, `conflict`, low confidence, low
-  coverage, conflict score, low preservation. The graph reports refusal counts per reason.
+- **Refusals are explicit and counted**: self-pairs, unknown artifacts, stale hashes, malformed
+  evidence, `insufficient_evidence`, `conflict`, low confidence, low coverage, conflict score,
+  low preservation. The graph reports refusal counts per reason; chunked evidence can authorize
+  only containment measured from every planned chunk while the containing side was whole.
 - **Blockers stop a plan**: protected members (with the core-derived reason list), any conflict
   inside the group, or a canonical that is itself absorbed elsewhere. A plan is `validated`
   only with zero blockers; `MergePlan.applicable` requires exactly that.
@@ -161,8 +172,10 @@ Notes that matter:
 3. **No deletion.** The apply path archives sources (`skill_manage delete` with
    `absorbed_into`), which core implements as a recoverable move to `skills/.archive/`; there is
    no purge path.
-4. **Typed evidence, no defaults.** A missing or malformed answer fails that pair; a truncated
-   pair is downgraded to `insufficient_evidence` without a model call; no partial authorization.
+4. **Typed, complete evidence.** A missing or malformed whole-pair answer or chunk fails that
+   pair; no partial answer set is aggregated. Chunked evidence can authorize only a containment
+   direction measured across every planned chunk while the containing side stayed whole. There
+   is no truncation path.
 5. **Hash binding.** Pairs, cache entries, and plan ids pin content digests; apply re-checks
    every affected package and refuses on any change. Mtime-only changes do not matter
    (content-addressed, not timestamp-addressed).
@@ -189,9 +202,10 @@ Notes that matter:
 
 - **Transport:** bounded attempts inside one `timeout_seconds` deadline; retry only 429/529/5xx
   and connection-level errors; other 4xx are terminal and surfaced with the offending field.
-- **Contract:** any asked question unanswered or malformed → typed error naming the question id;
-  that pair is recorded in `errors`, the rest of the scan continues, and the scan reports
-  `ok: false`.
+- **Contract:** any asked question unanswered or malformed, or any chunk request failing → one
+  pair error naming the question/request; no partial judgment is emitted, the rest of the scan
+  continues, and the scan reports `ok: false`. A pair over the remaining request budget is
+  reported in `scan["skipped"]` and receives no partial request set.
 - **Apply:** stops on the first failed mutation and reports the snapshot, what was applied, and
   exact `hermes curator restore <name>` commands for already-archived sources.
 - **Audit/state writes** never change a verdict (best-effort, DEBUG-logged failures).

@@ -1,12 +1,11 @@
-"""Engine integration tests: the eight safety behaviors, with every host seam stubbed.
+"""Engine integration tests: safety behaviors with every host seam stubbed.
 
 Scope (one class per behavior):
   1. ObserveModeTests   -- observe mode dispatches nothing and takes no snapshot.
   2. RequestBudgetTests -- scan issues at most ``max_requests`` Jev calls, on the
                            top-ranked pairs; ``off``/zero budget issue none.
   3. JevFailureTests    -- a failing Jev call is an error, never a judgment.
-  4. TruncationTests    -- explicitly truncated state skips Jev, yields
-                           ``insufficient_evidence``, and builds no applicable plan.
+  4. ChunkedEvidenceTests -- long pairs use complete, fail-closed chunk evidence.
   5. ApplyModeGateTests -- apply refuses unless mode == "apply" and a ctx exists.
   6. StaleHashTests     -- changed/missing content digests refuse before backup.
   7. BackupOrderTests   -- the snapshot is taken before the first dispatch; a failed
@@ -40,10 +39,11 @@ from unittest import mock
 from plugin import engine as engine_module
 from plugin import state as state_module
 from plugin.candidates import generate_candidates
-from plugin.models import MergePlan, Settings, SkillArtifact
+from plugin.models import CandidatePair, MergePlan, Settings, SkillArtifact
+from plugin.questions import PAIR_STATE_BUDGET_CHARS, state_bytes
 from plugin.transport import JevResponse
 
-CONTRACT_VERSION = "skill-relations-v1"
+CONTRACT_VERSION = "skill-relations-v2"
 
 
 # --- fixtures -------------------------------------------------------------------------
@@ -166,6 +166,8 @@ class EngineHarness:
         self.settings = Settings(mode=mode, **settings)
         self.inventory = list(inventory if inventory is not None else default_inventory())
         self.request_calls: list[set[str]] = []
+        self.request_states: list[dict[str, Any]] = []
+        self.request_questions: list[set[str]] = []
         self.request_impl = request_impl
         self.snapshot = snapshot
         self.snapshot_error = snapshot_error
@@ -204,6 +206,8 @@ class EngineHarness:
 
     def _request(self, state: dict[str, Any], questions: Any, settings: Settings) -> JevResponse:
         self.request_calls.append({state.get("skill_a_name"), state.get("skill_b_name")})
+        self.request_states.append(dict(state))
+        self.request_questions.append(set(questions))
         if self.request_impl is not None:
             return self.request_impl(state, questions, settings)
         return canned_response()
@@ -226,6 +230,7 @@ class EngineHarness:
         stack.enter_context(mock.patch.object(engine_module, "collect_inventory",
                                               self._collect_inventory))
         stack.enter_context(mock.patch.object(engine_module, "request", self._request))
+        stack.enter_context(mock.patch.object(state_module, "redact_text", lambda text: str(text)))
         stack.enter_context(mock.patch.object(state_module, "load_relation_cache", lambda: {}))
         stack.enter_context(mock.patch.object(state_module, "cached_relation", lambda *a, **k: None))
         stack.enter_context(mock.patch.object(state_module, "remember_relation", lambda *a, **k: "key"))
@@ -308,6 +313,28 @@ class RequestBudgetTests(unittest.TestCase):
         self.assertEqual({frozenset(names) for names in h.request_calls},
                          {frozenset((pair.a, pair.b)) for pair in expected[:2]},
                          "the budget must cover the top-ranked pairs, not an arbitrary subset")
+
+    def test_request_budget_charges_the_whole_chunk_plan_or_skips_it(self):
+        skills = [make_artifact("alpha"), make_artifact("beta"),
+                  make_artifact("huge-a", text="A" * 300_000),
+                  make_artifact("tiny", text="B" * 10_000)]
+        pairs = [
+            CandidatePair("alpha", "beta", "digest-alpha", "digest-beta", 1.0, ("test",)),
+            CandidatePair("huge-a", "tiny", "digest-huge-a", "digest-tiny", 0.9, ("test",)),
+        ]
+
+        with EngineHarness(mode="observe", inventory=skills, max_requests=2) as h:
+            assert h.engine is not None
+            with mock.patch.object(engine_module, "generate_candidates", return_value=pairs):
+                scan = h.engine.scan()
+
+        self.assertEqual(len(h.request_calls), 1, "an over-budget pair must never run partially")
+        self.assertEqual([(row["a"], row["b"]) for row in scan["judgments"]],
+                         [("alpha", "beta")])
+        self.assertEqual(len(scan["skipped"]), 1)
+        self.assertEqual(scan["skipped"][0]["pair"], "huge-a::tiny")
+        self.assertEqual(scan["skipped"][0]["reason"], "request-budget")
+        self.assertGreater(scan["skipped"][0]["requests"], 1)
 
     def test_zero_request_budget_issues_no_jev_calls(self):
         with EngineHarness(mode="observe", max_requests=0) as h:
@@ -393,35 +420,102 @@ class JevFailureTests(unittest.TestCase):
                       "the route failure must be surfaced in scan errors")
 
 
-# --- 4. explicit truncation never authorizes merging -----------------------------------
+# --- 4. long-pair chunking never authorizes partial evidence ---------------------------
 
-class TruncationTests(unittest.TestCase):
-    def test_truncated_pair_skips_jev_and_builds_no_applicable_plan(self):
-        skills = [make_artifact("huge-a", text="A" * 8_000),
-                  make_artifact("huge-b", text="B" * 8_000)]
+class ChunkedEvidenceTests(unittest.TestCase):
+    def test_long_pair_is_chunked_without_truncation_and_can_authorize(self):
+        long_text = ('rule "quoted" \\ path\r\n' * 20_000)[:300_000]
+        skills = [make_artifact("huge-a", text=long_text),
+                  make_artifact("huge-b", text="B" * 10_000)]
 
-        def explode(state: dict[str, Any], questions: Any, settings: Settings) -> JevResponse:
-            raise AssertionError("Jev must never be asked about explicitly truncated state")
-
-        with EngineHarness(mode="observe", inventory=skills, max_state_chars=4_000,
-                           request_impl=explode) as h:
+        with EngineHarness(mode="observe", inventory=skills) as h:
             scan = h.engine.scan()
             plans = h.engine.build_plans(scan)
 
-        self.assertEqual(h.request_calls, [], "truncated pairs must not reach the network")
         self.assertTrue(scan["ok"])
+        self.assertGreater(len(h.request_calls), 1)
+        self.assertEqual(len(scan["judgments"]), 1)
+        judgment = scan["judgments"][0]
+        self.assertEqual(judgment["relation"], "a_subset_of_b")
+        self.assertEqual(judgment["evidence"], "chunked")
+        self.assertEqual(judgment["preservation_a_in_b"], 0.95)
+        self.assertEqual(judgment["preservation_b_in_a"], 0.0)
+        for state, questions in zip(h.request_states, h.request_questions):
+            self.assertLessEqual(state_bytes(state), PAIR_STATE_BUDGET_CHARS)
+            self.assertEqual(state["skill_b"], "B" * 10_000)
+            self.assertEqual(state["skill_b_scope"], "complete")
+            self.assertTrue(state["skill_a_scope"].startswith("part "))
+            self.assertEqual(questions, {"relation", "coverage", "conflict", "a_in_b"})
+            self.assertFalse(any(key.endswith("_truncated") for key in state))
+            self.assertNotIn("explicitly truncated", repr(state))
+        self.assertEqual(len(plans), 1)
+        self.assertTrue(plans[0].applicable)
+        self.assertEqual((plans[0].canonical, plans[0].absorbed), ("huge-b", ("huge-a",)))
+
+    def test_oversized_both_sides_are_unavailable_without_network(self):
+        skills = [make_artifact("huge-a", text="A" * 200_000),
+                  make_artifact("huge-b", text="B" * 200_000)]
+
+        with EngineHarness(mode="observe", inventory=skills, max_requests=0) as h:
+            scan = h.engine.scan()
+            plans = h.engine.build_plans(scan)
+
+        self.assertEqual(h.request_calls, [])
+        self.assertEqual(scan["skipped"], [])
         self.assertEqual(len(scan["judgments"]), 1)
         judgment = scan["judgments"][0]
         self.assertEqual(judgment["relation"], "insufficient_evidence")
+        self.assertEqual(judgment["evidence"], "unavailable")
         self.assertEqual(judgment["coverage"], 0.0)
         self.assertEqual(judgment["preservation_a_in_b"], 0.0)
         self.assertEqual(judgment["preservation_b_in_a"], 0.0)
-        self.assertEqual(judgment["contract_version"], CONTRACT_VERSION)
-
-        self.assertEqual(len(plans), 1)
         self.assertEqual(plans[0].status, "noop")
-        self.assertEqual(plans[0].absorbed, ())
-        self.assertFalse(plans[0].applicable, "truncated evidence must never authorize a merge")
+        self.assertFalse(plans[0].applicable)
+
+    def test_lowest_chunk_preservation_reaches_the_graph_gate(self):
+        skills = [make_artifact("huge-a", text="A" * 300_000),
+                  make_artifact("huge-b", text="B" * 10_000)]
+        calls = 0
+
+        def low_second_chunk(state: dict[str, Any], questions: Any,
+                             settings: Settings) -> JevResponse:
+            nonlocal calls
+            calls += 1
+            return canned_response(a_in_b=0.5 if calls == 2 else 0.99)
+
+        with EngineHarness(mode="observe", inventory=skills,
+                           request_impl=low_second_chunk) as h:
+            scan = h.engine.scan()
+            plans = h.engine.build_plans(scan)
+
+        self.assertGreater(calls, 1)
+        self.assertAlmostEqual(scan["judgments"][0]["preservation_a_in_b"], 0.5)
+        self.assertEqual(plans[0].status, "noop")
+        self.assertFalse(plans[0].applicable)
+        self.assertEqual(plans[0].metadata["refusals"], {"low-preservation": 1})
+
+    def test_one_failed_chunk_is_a_pair_error_not_a_partial_judgment(self):
+        skills = [make_artifact("huge-a", text="A" * 300_000),
+                  make_artifact("huge-b", text="B" * 10_000)]
+        calls = 0
+
+        def fail_second_chunk(state: dict[str, Any], questions: Any,
+                              settings: Settings) -> JevResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("chunk failed")
+            return canned_response()
+
+        with EngineHarness(mode="observe", inventory=skills,
+                           request_impl=fail_second_chunk) as h:
+            scan = h.engine.scan()
+
+        self.assertFalse(scan["ok"])
+        self.assertEqual(calls, 2, "the pair must stop at the first failed chunk")
+        self.assertEqual(scan["judgments"], [])
+        self.assertEqual(len(scan["errors"]), 1)
+        self.assertEqual(scan["errors"][0]["pair"], "huge-a::huge-b")
 
 
 # --- 5. apply requires mode=apply ------------------------------------------------------
