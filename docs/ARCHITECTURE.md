@@ -48,11 +48,12 @@ criteria (`duplicate`, `a_subset_of_b`, `b_subset_of_a`, `same_class`, `compleme
 `conflict`, `unrelated`, `insufficient_evidence`), plus typed coverage, containment, conflict,
 and same-class nouls. Pair state is never truncated.
 
-If both redacted packages fit the 160,000-byte serialized-state ceiling and the conservative
-24,000-token estimate, one whole-pair request asks the unchanged six-question contract. Serialized
-size includes JSON escaping. The stdlib-only token estimate intentionally over-counts code,
-punctuation, newlines, and high-entropy runs; it exists because a live 158k Markdown/code state was
-byte-safe but exceeded the model context.
+Jev 1.13 allows 64,000 tokens per request, with a stricter 32,000-token limit for state plus the
+longest question. The planner keeps independent safety margins: if both redacted packages fit the
+160,000-byte serialized-state ceiling and 24,000-token estimate, one whole-pair request asks the
+unchanged six-question contract. Serialized size includes JSON escaping and catches low-token
+whitespace; the token estimate catches dense Markdown/code. Live, 160k low-entropy characters used
+30,880 tokens, while a 158k Markdown/code state exceeded the model limit.
 
 Otherwise the planner evaluates each plannable containment direction separately: the candidate
 being absorbed is split at package-file markers, then Markdown headings, then fixed-overlap hard
@@ -83,9 +84,12 @@ retry on 429/529/5xx, same-origin-only redirect policy. Credentials resolve thro
 passes through core's redactor before egress; a missing/failed redactor refuses the request.
 
 `plugin/engine.py` walks candidate pairs in rank order and charges `max_requests` by planned Jev
-requests, not pairs. A pair that cannot fit the remaining request budget is reported in
-`scan["skipped"]` and is never partially judged; later cache hits and cheaper pairs may still be
-used. Requests within one pair are sequential, while different pairs keep the four-worker pool.
+requests, not pairs. A byte/token lower bound refuses pairs that cannot fit the remaining per-operation
+request budget before chunk materialization. If that bound fits, the exact chunk count is checked after
+materialization and before any request is sent. Scans report refusals in `scan["skipped"]`, and
+explicit pair reviews return a bounded error. No partial request set is sent; later cache hits and
+cheaper pairs may still be used. Requests within one pair are sequential, while different pairs
+keep the four-worker pool.
 Judgments are cached in `relations.json` under both content digests, contract version, and judge
 model; the v3 contract therefore cannot replay truncation-era v1/v2 rows. Any chunk failure is one
 pair error with no partial judgment, and the scan reports `ok: false`.
@@ -218,8 +222,10 @@ Notes that matter:
   and connection-level errors; other 4xx are terminal and surfaced with the offending field.
 - **Contract:** any asked question unanswered or malformed, or any chunk request failing → one
   pair error naming the question/request; no partial judgment is emitted, the rest of the scan
-  continues, and the scan reports `ok: false`. A pair over the remaining request budget is
-  reported in `scan["skipped"]` and receives no partial request set.
+  continues, and the scan reports `ok: false`. A pair over the remaining request budget is refused
+  either by the pre-materialization lower-bound check or by the post-materialization exact-count
+  check, reported in `scan["skipped"]`, and receives no partial request set; explicit pair review
+  returns the same refusal as an error.
 - **Apply:** stops on the first failed mutation and reports the snapshot, what was applied, and
   exact `hermes curator restore <name>` commands for already-archived sources.
 - **Audit/state writes** never change a verdict (best-effort, DEBUG-logged failures).

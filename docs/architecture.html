@@ -222,7 +222,7 @@
             <ol class="arch-flow">
               <li class="arch-node"><strong>Inventory</strong><small>Read bounded packages; bind SHA-256 digests and core-derived protection reasons.</small></li>
               <li class="arch-node"><strong>Deterministic candidates</strong><small>Generate stable lexical top-k pairs; similarity proposes but never authorizes.</small></li>
-              <li class="arch-node"><strong>Whole/chunk planner</strong><small>Use one whole request under 160,000 serialized bytes and 24,000 estimated tokens; otherwise plan each direction whose containing side fits whole.</small></li>
+              <li class="arch-node"><strong>Whole/chunk planner</strong><small>Jev: 64,000 tokens per request / 32,000 for state + longest question. Local margins: 160,000 serialized bytes and 24,000 estimated tokens; a lower-bound precheck rejects pairs that exceed the remaining per-operation request budget, then the exact chunk count is checked before sending.</small></li>
               <li class="arch-node"><strong>Egress + typed transport</strong><small>Require consent, redact once, send bounded HTTPS state, and validate every requested answer.</small></li>
               <li class="arch-node"><strong>Fail-closed aggregator</strong><small>Require complete chunk sets; minimum preservation/coverage, maximum conflict, zero for unmeasured directions.</small></li>
               <li class="arch-node"><strong>Direct-edge graph</strong><small>Build hash-bound edges with no transitive authorization.</small></li>
@@ -332,7 +332,7 @@
         <h3 style="color:var(--blue)">Observe path</h3>
         <div class="step"><strong>Inventory + candidates</strong><small>Deterministic and local.</small></div>
         <div class="step guard"><strong>Consent gate</strong><small>No request unless mode is not off and content egress is explicitly enabled.</small></div>
-        <div class="step"><strong>Whole/chunk request plan</strong><small>Serialized bytes and estimated tokens are bounded; impossible directions stay local.</small></div>
+        <div class="step"><strong>Whole/chunk request plan</strong><small>Serialized bytes, estimated tokens, and request count are bounded before calls; impossible or over-budget pairs stay local.</small></div>
         <div class="step"><strong>Typed Jev evidence</strong><small>Every planned chunk must answer; malformed or nonfinite evidence fails the pair.</small></div>
         <div class="step"><strong>Fail-closed aggregation</strong><small>Minimum preservation/coverage, maximum conflict, and zero for unmeasured directions.</small></div>
         <div class="step pass"><strong>Graph + report</strong><small>Plans may be produced; skills remain byte-identical.</small></div>

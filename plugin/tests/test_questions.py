@@ -19,12 +19,13 @@ from plugin import state as state_module
 from plugin.graph import build_graph
 from plugin.models import RELATIONS, RelationJudgment, SkillArtifact
 from plugin.questions import (
-    CHUNK_FLOOR_CHARS,
+    CHUNK_FLOOR_BYTES,
     CONTRACT_VERSION,
-    PAIR_STATE_BUDGET_CHARS,
+    PAIR_STATE_BUDGET_BYTES,
     PAIR_STATE_TOKEN_BUDGET,
-    STATE_RESERVE_CHARS,
+    STATE_RESERVE_BYTES,
     PairPlan,
+    PairRequestBudgetExceeded,
     PairRequest,
     aggregate_pair,
     chunk_text,
@@ -83,9 +84,9 @@ def fast_redact():
 
 
 @contextlib.contextmanager
-def small_budget(*, chars: int, reserve: int = 200, floor: int = 600, overlap: int = 100):
-    with mock.patch.multiple(questions_module, PAIR_STATE_BUDGET_CHARS=chars,
-                             STATE_RESERVE_CHARS=reserve, CHUNK_FLOOR_CHARS=floor,
+def small_budget(*, byte_limit: int, reserve: int = 200, floor: int = 600, overlap: int = 100):
+    with mock.patch.multiple(questions_module, PAIR_STATE_BUDGET_BYTES=byte_limit,
+                             STATE_RESERVE_BYTES=reserve, CHUNK_FLOOR_BYTES=floor,
                              CHUNK_OVERLAP_CHARS=overlap):
         yield
 
@@ -163,7 +164,7 @@ def chunked_plan(a_text: str, b_text: str, *, budget: int | None = None) -> Pair
     with fast_redact():
         if budget is None:
             return plan_pair(artifact("a", a_text), artifact("b", b_text))
-        with small_budget(chars=budget):
+        with small_budget(byte_limit=budget):
             return plan_pair(artifact("a", a_text), artifact("b", b_text))
 
 
@@ -215,13 +216,13 @@ class SizeHelperTests(unittest.TestCase):
 # --- 2. chunking ----------------------------------------------------------------------
 
 class ChunkingTests(unittest.TestCase):
-    LIMIT = CHUNK_FLOOR_CHARS
+    LIMIT = CHUNK_FLOOR_BYTES
 
     def test_empty_text_yields_no_chunks(self):
         self.assertEqual(chunk_text("", self.LIMIT), [])
 
     def test_limit_below_the_floor_is_refused(self):
-        for limit in (0, 1, CHUNK_FLOOR_CHARS - 1):
+        for limit in (0, 1, CHUNK_FLOOR_BYTES - 1):
             with self.assertRaises(ValueError):
                 chunk_text("x" * 10, limit)
 
@@ -307,12 +308,28 @@ class ChunkingTests(unittest.TestCase):
             self.assertIn(chunk.text, text)
         assert_lossless(self, text, chunks, self.LIMIT)
 
+    def test_hard_split_never_probes_the_whole_remaining_tail(self):
+        text = filler(100_000)
+        probed: list[int] = []
+        original = questions_module._chunk_fits
+
+        def recording(candidate: str, byte_limit: int, token_limit: int | None) -> bool:
+            probed.append(len(candidate))
+            return original(candidate, byte_limit, token_limit)
+
+        with mock.patch.object(questions_module, "_chunk_fits", side_effect=recording):
+            pieces = questions_module._hard_split(text, self.LIMIT)
+
+        self.assertTrue(pieces)
+        self.assertLessEqual(max(probed), self.LIMIT * 4,
+                             "window search must stay near capacity, not rescan the tail")
+
 
 # --- 3. planning ----------------------------------------------------------------------
 
 class PlanTests(unittest.TestCase):
     def test_fast_path_boundary_is_the_measured_budget_minus_reserve(self):
-        self.assertEqual(79_000 + 80_000, PAIR_STATE_BUDGET_CHARS - STATE_RESERVE_CHARS)
+        self.assertEqual(79_000 + 80_000, PAIR_STATE_BUDGET_BYTES - STATE_RESERVE_BYTES)
         with fast_redact(), mock.patch.object(
                 questions_module, "PAIR_STATE_TOKEN_BUDGET", 1_000_000):
             under = plan_pair(artifact("a", "a" * 79_000), artifact("b", "b" * 80_000))
@@ -327,13 +344,13 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(under.requests[0].state["skill_a_scope"], "complete")
         self.assertEqual(under.requests[0].state["skill_b_scope"], "complete")
         self.assertEqual(under.requests[0].state["contract"], CONTRACT_VERSION)
-        self.assertLessEqual(state_bytes(under.requests[0].state), PAIR_STATE_BUDGET_CHARS)
+        self.assertLessEqual(state_bytes(under.requests[0].state), PAIR_STATE_BUDGET_BYTES)
 
         self.assertEqual(over.kind, "chunked")
         self.assertGreater(len(over.requests), 1)
         for request in over.requests:
             self.assertTrue(request.side in {"a", "b"})
-            self.assertLessEqual(state_bytes(request.state), PAIR_STATE_BUDGET_CHARS)
+            self.assertLessEqual(state_bytes(request.state), PAIR_STATE_BUDGET_BYTES)
 
     def test_token_dense_pair_is_chunked_below_the_model_budget(self):
         dense = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" * 2_000
@@ -358,7 +375,7 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(request.state["skill_b_scope"], "complete")
             self.assertTrue(request.state["skill_a_scope"].startswith(
                 f"part {request.index} of {request.count}"))
-            self.assertLessEqual(state_bytes(request.state), PAIR_STATE_BUDGET_CHARS)
+            self.assertLessEqual(state_bytes(request.state), PAIR_STATE_BUDGET_BYTES)
         self.assertEqual([request.index for request in plan.requests],
                          list(range(1, len(plan.requests) + 1)))
         self.assertEqual({request.count for request in plan.requests}, {len(plan.requests)})
@@ -380,6 +397,22 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.requests, ())
         self.assertEqual(plan.kind, "unavailable")
         self.assertEqual(plan.directions, ())
+
+    def test_request_budget_refuses_before_materializing_pathological_chunks(self):
+        source = filler(112_000, "a")
+        container = filler(53_215, "b")  # leaves only ~10 estimated tokens for a chunk
+        with fast_redact(), mock.patch.object(
+                questions_module, "chunk_text", wraps=chunk_text) as chunker:
+            with self.assertRaises(PairRequestBudgetExceeded) as raised:
+                plan_pair(artifact("a", source), artifact("b", container), max_requests=2)
+
+        self.assertGreater(raised.exception.required, 2)
+        chunker.assert_not_called()
+
+    def test_whole_pair_respects_a_zero_request_budget(self):
+        with fast_redact(), self.assertRaises(PairRequestBudgetExceeded) as raised:
+            plan_pair(artifact("a", "small"), artifact("b", "small"), max_requests=0)
+        self.assertEqual(raised.exception.required, 1)
 
     def test_plan_is_deterministic_and_follows_the_text_not_the_role(self):
         a_text, b_text = filler(130_000, "a"), filler(40_000, "b")
@@ -427,7 +460,7 @@ class PlanTests(unittest.TestCase):
     def test_whole_artifact_is_redacted_before_chunking(self):
         secret = "sk-" + "A" * 24
         text = package(("SKILL.md", "intro " + secret + " " + filler(1_600)))
-        with small_budget(chars=2_600, reserve=200, floor=600, overlap=100):
+        with small_budget(byte_limit=2_600, reserve=200, floor=600, overlap=100):
             plan = plan_pair(artifact("a", text), artifact("b", "b" * 900))
         redacted = state_module.redact_text(text)
         self.assertNotIn(secret, redacted)
@@ -441,7 +474,7 @@ class PlanTests(unittest.TestCase):
     def test_scopes_stay_bounded_when_a_chunk_covers_many_files(self):
         files = tuple((f"references/file-{index:03d}.md", "x" * 60) for index in range(40))
         text = package(*files)
-        with small_budget(chars=2_600, reserve=200, floor=600, overlap=100):
+        with small_budget(byte_limit=2_600, reserve=200, floor=600, overlap=100):
             plan = plan_pair(artifact("a", text), artifact("b", "b" * 900))
         self.assertTrue(plan.requests)
         for request in plan.requests:
@@ -455,7 +488,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.kind, "chunked")
         self.assertTrue(plan.requests)
         for request in plan.requests:
-            self.assertLessEqual(state_bytes(request.state), PAIR_STATE_BUDGET_CHARS)
+            self.assertLessEqual(state_bytes(request.state), PAIR_STATE_BUDGET_BYTES)
             self.assertLessEqual(state_tokens(request.state), PAIR_STATE_TOKEN_BUDGET)
 
     def test_escape_heavy_chunk_states_stay_inside_the_measured_budget(self):
@@ -465,7 +498,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.kind, "chunked")
         self.assertGreater(len(plan.requests), 1)
         for request in plan.requests:
-            self.assertLessEqual(state_bytes(request.state), PAIR_STATE_BUDGET_CHARS)
+            self.assertLessEqual(state_bytes(request.state), PAIR_STATE_BUDGET_BYTES)
 
 
 # --- 4. aggregation -------------------------------------------------------------------
@@ -523,7 +556,7 @@ class AggregationTests(unittest.TestCase):
         self.assertEqual(judgment.relation, "duplicate")
 
     def test_low_preservation_is_reported_and_never_certifies(self):
-        with small_budget(chars=2_600, reserve=200, floor=600, overlap=100):
+        with small_budget(byte_limit=2_600, reserve=200, floor=600, overlap=100):
             with fast_redact():
                 a, b = artifact("a", "a" * 2_000), artifact("b", "b" * 900)
                 plan = plan_pair(a, b)
@@ -552,7 +585,7 @@ class AggregationTests(unittest.TestCase):
         self.assertAlmostEqual(judgment.preservation_a_in_b, 0.99)
 
     def test_unanimous_windows_agree_and_min_max_are_applied(self):
-        with small_budget(chars=2_600, reserve=200, floor=600, overlap=100):
+        with small_budget(byte_limit=2_600, reserve=200, floor=600, overlap=100):
             with fast_redact():
                 a, b = artifact("a", "a" * 2_000), artifact("b", "b" * 900)
                 plan = plan_pair(a, b)
@@ -571,7 +604,7 @@ class AggregationTests(unittest.TestCase):
         self.assertEqual(judgment.probabilities["unrelated"], 1.0)
 
     def test_disagreement_is_insufficient_evidence(self):
-        with small_budget(chars=2_600, reserve=200, floor=600, overlap=100):
+        with small_budget(byte_limit=2_600, reserve=200, floor=600, overlap=100):
             with fast_redact():
                 a, b = artifact("a", "a" * 2_000), artifact("b", "b" * 900)
                 plan = plan_pair(a, b)

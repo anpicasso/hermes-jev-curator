@@ -115,16 +115,17 @@ plugins:
 | `key_env` | — | environment-variable name | custom endpoints only; anonymous when unset |
 | `allow_content_egress` | `false` | boolean | explicit consent required before skill text can be sent to any endpoint |
 | `timeout_seconds` | `25` | 1–120 | one overall deadline per request, retries included |
-| `max_requests` | `50` | 1–500 | per-scan request budget (chunk requests count individually) |
+| `max_requests` | `50` | 1–500 | per-operation request budget; chunk requests count individually |
 | `max_pairs` | `100` | 1–2000 | per-scan candidate-pair budget |
 | `top_k` | `5` | 1–20 | lexical neighbors kept per skill |
 
 ### Long pairs
 
-Pairs whose redacted package text fits both the **160,000-byte serialized-state ceiling** and the
-**24,000-token conservative estimate** use one whole-pair request. The planner counts JSON
-escaping as sent on the wire; the token estimator deliberately over-counts code, punctuation,
-newlines, and high-entropy runs so a byte-safe request cannot quietly exceed the model context.
+Jev 1.13 allows **64,000 tokens per request**, with a stricter **32,000-token limit for state plus
+the longest question**. This plugin deliberately stays below both: pairs whose redacted package
+text fits the independent **160,000-byte serialized-state ceiling** and **24,000-token estimate**
+use one whole-pair request. The byte check counts JSON escaping and catches low-token whitespace;
+the token check catches dense Markdown/code. The 160,000 figure is bytes, not Jev tokens.
 
 Larger pairs are planned per containment direction. The candidate source is split at package-file
 markers, then Markdown headings, then fixed-overlap hard boundaries, while the proposed container
@@ -135,8 +136,11 @@ Aggregation is fail-closed, not a vote: every planned chunk must answer; preserv
 use `min`, conflict uses `max`, and any conflict label wins. Certified directions determine
 duplicate/subset labels; disagreement becomes `insufficient_evidence`; an unmeasured direction is
 always `0.0`. If neither direction is plannable, the pair becomes local
-`insufficient_evidence` without a network call. `max_requests` counts actual requests, and pairs
-that do not fit the remaining budget are persisted in `scan["skipped"]` without partial calls.
+`insufficient_evidence` without a network call. The planner first compares a conservative
+byte/token lower bound with the remaining per-operation request budget and refuses immediately
+when it cannot fit. Otherwise it materializes chunks and checks the exact count before sending;
+scans persist any refusal in `scan["skipped"]`, while explicit pair review returns a bounded error.
+No partial calls are made.
 
 Endpoint presets:
 

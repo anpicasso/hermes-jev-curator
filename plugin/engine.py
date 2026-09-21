@@ -12,7 +12,13 @@ from typing import Any, Iterable, Mapping
 from .candidates import deterministic_relation, generate_candidates
 from .inventory import collect_inventory, digests_match
 from .models import CandidatePair, MergePlan, RelationJudgment, Settings, SkillArtifact
-from .questions import CONTRACT_VERSION, PairPlan, aggregate_pair, plan_pair
+from .questions import (
+    CONTRACT_VERSION,
+    PairPlan,
+    PairRequestBudgetExceeded,
+    aggregate_pair,
+    plan_pair,
+)
 from .transport import request
 
 
@@ -65,6 +71,7 @@ class CuratorEngine:
             else:
                 pairs_to_plan = pairs
             spent = 0
+            request_budget = max(0, int(self.settings.max_requests))
             pending: list[tuple[CandidatePair, PairPlan]] = []
             for pair in pairs_to_plan:
                 cached = cached_relation(
@@ -75,13 +82,18 @@ class CuratorEngine:
                     cache_hits += 1
                     continue
                 try:
-                    plan = plan_pair(by_name[pair.a], by_name[pair.b])
+                    plan = plan_pair(by_name[pair.a], by_name[pair.b],
+                                     max_requests=request_budget - spent)
+                except PairRequestBudgetExceeded as exc:
+                    skipped.append({"pair": pair.key, "reason": "request-budget",
+                                    "requests": exc.required, "requests_at_least": True})
+                    continue
                 except Exception as exc:
                     errors.append({"pair": pair.key,
                                    "error": f"{type(exc).__name__}: {str(exc)[:240]}"})
                     continue
                 cost = len(plan.requests)
-                if spent + cost > max(0, int(self.settings.max_requests)):
+                if spent + cost > request_budget:
                     skipped.append({"pair": pair.key, "reason": "request-budget",
                                     "requests": cost})
                     continue
@@ -301,7 +313,7 @@ class CuratorEngine:
         self, pair: CandidatePair, a: SkillArtifact, b: SkillArtifact,
         plan: PairPlan | None = None,
     ) -> RelationJudgment:
-        planned = plan or plan_pair(a, b)
+        planned = plan or plan_pair(a, b, max_requests=max(0, int(self.settings.max_requests)))
         answers: list[Mapping[str, Any]] = []
         model = ""
         for planned_request in planned.requests:

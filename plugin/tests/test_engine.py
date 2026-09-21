@@ -37,11 +37,12 @@ from typing import Any
 from unittest import mock
 
 from plugin import engine as engine_module
+from plugin import questions as questions_module
 from plugin import state as state_module
 from plugin.candidates import generate_candidates
 from plugin.models import CandidatePair, MergePlan, Settings, SkillArtifact
 from plugin.questions import (
-    PAIR_STATE_BUDGET_CHARS, PAIR_STATE_TOKEN_BUDGET, state_bytes, state_tokens,
+    PAIR_STATE_BUDGET_BYTES, PAIR_STATE_TOKEN_BUDGET, state_bytes, state_tokens,
 )
 from plugin.transport import JevResponse
 
@@ -337,6 +338,23 @@ class RequestBudgetTests(unittest.TestCase):
         self.assertEqual(scan["skipped"][0]["pair"], "huge-a::tiny")
         self.assertEqual(scan["skipped"][0]["reason"], "request-budget")
         self.assertGreater(scan["skipped"][0]["requests"], 1)
+        self.assertTrue(scan["skipped"][0].get("requests_at_least"))
+        self.assertEqual(scan["errors"], [])
+
+    def test_explicit_pair_review_refuses_an_over_budget_plan_before_chunking(self):
+        source = ("a0000000 " * 14_000)[:112_000]
+        container = ("b0000000 " * 6_000)[:53_215]
+        skills = [make_artifact("source", text=source),
+                  make_artifact("container", text=container)]
+        with EngineHarness(mode="observe", inventory=skills, max_requests=2) as h, \
+                mock.patch.object(questions_module, "chunk_text",
+                                  side_effect=AssertionError("chunk plan was materialized")):
+            assert h.engine is not None
+            result = h.engine.review("source", "container")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("request budget", result["error"])
+        self.assertEqual(h.request_calls, [])
 
     def test_zero_request_budget_issues_no_jev_calls(self):
         with EngineHarness(mode="observe", max_requests=0) as h:
@@ -443,7 +461,7 @@ class ChunkedEvidenceTests(unittest.TestCase):
         self.assertEqual(judgment["preservation_a_in_b"], 0.95)
         self.assertEqual(judgment["preservation_b_in_a"], 0.0)
         for state, questions in zip(h.request_states, h.request_questions):
-            self.assertLessEqual(state_bytes(state), PAIR_STATE_BUDGET_CHARS)
+            self.assertLessEqual(state_bytes(state), PAIR_STATE_BUDGET_BYTES)
             self.assertLessEqual(state_tokens(state), PAIR_STATE_TOKEN_BUDGET)
             self.assertEqual(state["skill_b"], "B" * 10_000)
             self.assertEqual(state["skill_b_scope"], "complete")

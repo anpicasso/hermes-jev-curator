@@ -27,17 +27,18 @@ from .models import RELATIONS, RelationJudgment, SkillArtifact
 
 CONTRACT_VERSION = "skill-relations-v3"
 
-# Measured (TypeSafe Jev, live): 160k low-entropy chars / 30,880 tokens are accepted,
-# while a 158k Markdown/code body can exceed the model token limit. Keep the byte ceiling
-# for transport safety and a conservative stdlib-only token estimate with room for Jev's
-# prompt and answer. Code, never settings: changing either is a contract change.
-PAIR_STATE_BUDGET_CHARS = 160_000
+# Jev 1.13 allows 64k tokens per request, with a stricter 32k-token limit on state plus
+# the longest question. Live, 160k low-entropy chars used 30,880 tokens, while a 158k
+# Markdown/code body exceeded that limit. Keep independent serialized-byte and conservative
+# token ceilings with room for questions. Changing either is a contract change.
+PAIR_STATE_BUDGET_BYTES = 160_000
 PAIR_STATE_TOKEN_BUDGET = 24_000
-STATE_RESERVE_CHARS = 1_000  # names, contract key, scope keys
+STATE_RESERVE_BYTES = 1_000  # names, contract key, scope keys
 # ponytail: this gates usable capacity; intact natural sections may be smaller.
-CHUNK_FLOOR_CHARS = 2_000
+CHUNK_FLOOR_BYTES = 2_000
 CHUNK_OVERLAP_CHARS = 400    # overlap on hard splits only
-_SCOPE_BUDGET_BYTES = 240    # one scope string, inside STATE_RESERVE_CHARS
+MAX_PAIR_REQUESTS = 500      # hard ceiling; Settings.max_requests may be lower
+_SCOPE_BUDGET_BYTES = 240    # one scope string, inside STATE_RESERVE_BYTES
 _MAX_SCOPE_FILES = 3         # file labels named in one scope string
 _PLACEHOLDER_SCOPE = "#" * _SCOPE_BUDGET_BYTES
 
@@ -141,6 +142,16 @@ class PairPlan:
             request.containment for request in self.requests if request.containment))
 
 
+class PairRequestBudgetExceeded(ValueError):
+    """The pair provably needs more requests than this operation permits."""
+
+    def __init__(self, required: int, limit: int):
+        self.required = max(1, int(required))
+        self.limit = max(0, int(limit))
+        super().__init__(
+            f"pair needs at least {self.required} requests; request budget is {self.limit}")
+
+
 def utf8_size(text: str) -> int:
     """Egress size of one string: UTF-8 bytes, exactly what the transport sends."""
     return len(str(text).encode("utf-8"))
@@ -176,8 +187,8 @@ def chunk_text(text: str, limit: int, *, token_limit: int | None = None) -> list
     """
     limit = int(limit)
     token_limit = int(token_limit) if token_limit is not None else None
-    if limit < CHUNK_FLOOR_CHARS:
-        raise ValueError(f"chunk limit {limit} is below CHUNK_FLOOR_CHARS={CHUNK_FLOOR_CHARS}")
+    if limit < CHUNK_FLOOR_BYTES:
+        raise ValueError(f"chunk limit {limit} is below CHUNK_FLOOR_BYTES={CHUNK_FLOOR_BYTES}")
     if not text:
         return []
     leaves: list[tuple[str, tuple[str, ...]]] = []
@@ -203,7 +214,8 @@ def chunk_text(text: str, limit: int, *, token_limit: int | None = None) -> list
     ]
 
 
-def plan_pair(a: SkillArtifact, b: SkillArtifact) -> PairPlan:
+def plan_pair(a: SkillArtifact, b: SkillArtifact, *,
+              max_requests: int = MAX_PAIR_REQUESTS) -> PairPlan:
     """Plan one pair: whole-pair inside the measured budget, else per-direction chunks.
 
     Direction ``a_in_b`` chunks ``a`` and sends ``b`` whole (and mirrored); a pair whose
@@ -215,17 +227,26 @@ def plan_pair(a: SkillArtifact, b: SkillArtifact) -> PairPlan:
     a_text = redact_text(a.text)
     b_text = redact_text(b.text)
     whole = _pair_state(a.name, a_text, b.name, b_text)
-    if (utf8_size(a_text) + utf8_size(b_text) <= PAIR_STATE_BUDGET_CHARS - STATE_RESERVE_CHARS
-            and state_bytes(whole) <= PAIR_STATE_BUDGET_CHARS
+    request_limit = max(0, int(max_requests))
+    if (utf8_size(a_text) + utf8_size(b_text) <= PAIR_STATE_BUDGET_BYTES - STATE_RESERVE_BYTES
+            and state_bytes(whole) <= PAIR_STATE_BUDGET_BYTES
             and state_tokens(whole) <= PAIR_STATE_TOKEN_BUDGET):
+        if request_limit < 1:
+            raise PairRequestBudgetExceeded(1, request_limit)
         return PairPlan(requests=(PairRequest(state=whole, questions=relation_questions()),))
     requests: list[PairRequest] = []
     for side, name, text, other_name, other_text in (
         ("a", a.name, a_text, b.name, b_text),
         ("b", b.name, b_text, a.name, a_text),
     ):
-        requests.extend(_direction_requests(side=side, name=name, text=text,
-                                            other_name=other_name, other_text=other_text))
+        remaining = request_limit - len(requests)
+        try:
+            requests.extend(_direction_requests(
+                side=side, name=name, text=text, other_name=other_name,
+                other_text=other_text, max_requests=remaining))
+        except PairRequestBudgetExceeded as exc:
+            raise PairRequestBudgetExceeded(len(requests) + exc.required,
+                                            request_limit) from exc
     return PairPlan(requests=tuple(requests))
 
 
@@ -313,21 +334,31 @@ def _chunked_judgment(plan: PairPlan, a: SkillArtifact, b: SkillArtifact,
 
 
 def _direction_requests(*, side: str, name: str, text: str,
-                        other_name: str, other_text: str) -> list[PairRequest]:
+                        other_name: str, other_text: str,
+                        max_requests: int) -> list[PairRequest]:
     """Requests for direction `side -> other`: one per chunk of `side`, `other` whole."""
     containment = "a_in_b" if side == "a" else "b_in_a"
-    limit = PAIR_STATE_BUDGET_CHARS - state_bytes(
+    limit = PAIR_STATE_BUDGET_BYTES - state_bytes(
         _sided_state(side, name, "", other_name, other_text, _PLACEHOLDER_SCOPE))
     token_limit = PAIR_STATE_TOKEN_BUDGET - state_tokens(
         _sided_state(side, name, "", other_name, other_text, _PLACEHOLDER_SCOPE))
-    if limit < CHUNK_FLOOR_CHARS or token_limit < 1:
+    if limit < CHUNK_FLOOR_BYTES or token_limit < 1:
         return []
+    minimum = max(
+        math.ceil(_serialized_text_bytes(text) / limit) if text else 0,
+        math.ceil(_serialized_text_tokens(text) / token_limit) if text else 0,
+    )
+    if minimum > max_requests:
+        raise PairRequestBudgetExceeded(minimum, max_requests)
     questions = _chunk_questions(containment)
     requests: list[PairRequest] = []
-    for chunk in chunk_text(text, limit, token_limit=token_limit):
+    chunks = chunk_text(text, limit, token_limit=token_limit)
+    if len(chunks) > max_requests:
+        raise PairRequestBudgetExceeded(len(chunks), max_requests)
+    for chunk in chunks:
         state = _sided_state(side, name, chunk.text, other_name, other_text,
                              _scope(chunk.index, chunk.count, chunk.files))
-        if (state_bytes(state) > PAIR_STATE_BUDGET_CHARS
+        if (state_bytes(state) > PAIR_STATE_BUDGET_BYTES
                 or state_tokens(state) > PAIR_STATE_TOKEN_BUDGET):
             raise ValueError("planned pair state exceeds its byte or token budget")
         requests.append(PairRequest(state=state, questions=questions, side=side,
@@ -392,13 +423,23 @@ def _hard_split(text: str, limit: int, token_limit: int | None = None) -> list[s
     pieces: list[str] = []
     start = 0
     while start < len(text):
-        low, high, end = start + 1, len(text), start
-        while low <= high:
-            middle = (low + high) // 2
-            if _chunk_fits(text[start:middle], limit, token_limit):
-                end, low = middle, middle + 1
-            else:
-                high = middle - 1
+        end = start
+        step = 1
+        probe = min(len(text), start + step)
+        while _chunk_fits(text[start:probe], limit, token_limit):
+            end = probe
+            if end == len(text):
+                break
+            step *= 2
+            probe = min(len(text), start + step)
+        if end < len(text):
+            low, high = end + 1, probe - 1  # `probe` is the first known failure.
+            while low <= high:
+                middle = (low + high) // 2
+                if _chunk_fits(text[start:middle], limit, token_limit):
+                    end, low = middle, middle + 1
+                else:
+                    high = middle - 1
         if end == start:
             raise ValueError("one character exceeds the chunk budget")
         pieces.append(text[start:end])

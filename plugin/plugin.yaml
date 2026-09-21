@@ -54,7 +54,7 @@ config_schema:
   max_requests:
     type: int
     default: 50
-    description: "Maximum Jev requests per scan (1-500)."
+    description: "Maximum Jev requests per scan or explicit pair review (1-500)."
   max_pairs:
     type: int
     default: 100
