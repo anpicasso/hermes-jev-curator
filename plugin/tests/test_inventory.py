@@ -792,7 +792,7 @@ class ProtectionTests(InventoryTestCase):
         artifact = artifacts[0]
         self.assertEqual(artifact.protected_reasons, ())
         self.assertFalse(artifact.protected)
-        self.assertEqual(artifact.path, package)
+        self.assertEqual(artifact.path, package.resolve())
         self.assertEqual(artifact.digest, expected_digest(package))
 
 
