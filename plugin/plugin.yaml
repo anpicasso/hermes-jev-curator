@@ -6,7 +6,7 @@ license: MIT
 homepage: "https://github.com/anpicasso/hermes-jev-curator"
 kind: standalone
 manifest_version: 2
-requires_hermes: ">=0.21.2"
+requires_hermes: ">=0.23.1"
 tags: [skills, curator, jev, governance]
 
 # Doctor diffs these declared tool/hook surfaces against a recording run of register(ctx).

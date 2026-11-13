@@ -316,7 +316,7 @@ credentials, and no core file was changed.
 
 ## Requirements
 
-- Hermes Agent v0.21.2+ (verified against v0.23.1 source checkout `68471c204c`)
+- Hermes Agent v0.23.1+ (verified against v0.23.1 source checkout `68471c204c`)
 - Python 3.10+; standard library only — no third-party Python dependencies
 - A Jev credential only if you use TypeSafe or OpenRouter
 
