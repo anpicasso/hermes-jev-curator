@@ -74,7 +74,7 @@ class FakeEngine:
     def scan(self, names=None, *, use_jev=True):
         return {"ok": True, "mode": "observe", "candidates": [], "judgments": [], "errors": []}
 
-    def review(self, first, second=None):
+    def review(self, first, second=None, *, use_jev=True):
         return {"ok": True, "judgment": {"a": first, "b": second or first,
                                          "relation": "unrelated", "confidence": 0.5}}
 
@@ -196,6 +196,31 @@ class RegistrationTests(unittest.TestCase):
             self.assertIn("engine exploded", payload["error"])
         with mock.patch.object(plugin, "_service", mock.Mock(side_effect=ImportError("no service"))):
             self.assertFalse(json.loads(plugin._tool_handler({}))["ok"])
+
+    def test_tool_forwards_use_jev_to_engine(self):
+        calls = []
+
+        class RecordingEngine:
+            def scan(self, names=None, *, use_jev=True):
+                calls.append(("scan", tuple(names or ()), use_jev))
+                return {"ok": True}
+
+            def review(self, first, second=None, *, use_jev=True):
+                calls.append(("review", first, second, use_jev))
+                return {"ok": True}
+
+        with mock.patch.object(plugin, "_service", lambda: mock.Mock(engine=RecordingEngine())):
+            for args in ({"skill": "a", "use_jev": False},
+                         {"pair": ["a", "b"], "use_jev": False},
+                         {"use_jev": False},
+                         {"skill": "a"}):
+                self.assertTrue(plugin._tool_payload(args)["ok"])
+        self.assertEqual(calls, [
+            ("review", "a", None, False),
+            ("review", "a", "b", False),
+            ("scan", (), False),
+            ("review", "a", None, True),
+        ])
 
     def test_observer_records_and_never_raises(self):
         service = FakeService()

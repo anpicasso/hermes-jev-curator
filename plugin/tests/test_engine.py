@@ -375,6 +375,23 @@ class RequestBudgetTests(unittest.TestCase):
         self.assertIn("mode is off", review["error"])
         self.assertEqual(h.ctx.calls, [])
 
+    def test_use_jev_false_scans_the_focused_skill_without_network(self):
+        with EngineHarness(mode="off", allow_content_egress=False) as h:
+            result = h.engine.review("alpha", use_jev=False)
+
+        self.assertTrue(result["ok"])
+        self.assertGreater(len(result["candidates"]), 0)
+        self.assertEqual(result["judgments"], [])
+        self.assertEqual(h.request_calls, [])
+
+    def test_use_jev_false_rejects_an_explicit_pair_review(self):
+        with EngineHarness(mode="off", allow_content_egress=False) as h:
+            result = h.engine.review("alpha", "beta", use_jev=False)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("requires Jev", result["error"])
+        self.assertEqual(h.request_calls, [])
+
 
 # --- 3. Jev failure is an error, never an approval -------------------------------------
 

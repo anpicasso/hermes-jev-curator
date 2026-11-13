@@ -85,14 +85,15 @@ def _tool_handler(args: Mapping[str, Any] | None = None, **kwargs: Any) -> str:
 
 def _tool_payload(args: Mapping[str, Any]) -> dict[str, Any]:
     engine = _service().engine
+    use_jev = bool(args.get("use_jev", True))
     pair = args.get("pair")
     if pair is not None:
         first, second = _pair_names(pair)
-        return engine.review(first, second)
+        return engine.review(first, second, use_jev=use_jev)
     name = str(args.get("skill") or "").strip()
     if name:
-        return engine.review(name)
-    return engine.scan(use_jev=bool(args.get("use_jev", True)))
+        return engine.review(name, use_jev=use_jev)
+    return engine.scan(use_jev=use_jev)
 
 
 def _on_skill_lifecycle(**event: Any) -> None:

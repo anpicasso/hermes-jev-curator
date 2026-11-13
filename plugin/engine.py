@@ -135,11 +135,12 @@ class CuratorEngine:
             "latency_ms": int((time.monotonic() - started) * 1000),
         }
 
-    def review(self, first: str, second: str | None = None) -> dict[str, Any]:
-        if self.settings.mode == "off":
-            return {"ok": False, "error": "Jev requests are disabled while mode is off"}
-        if not self.settings.allow_content_egress:
-            return {"ok": False, "error": "content egress is disabled; set allow_content_egress: true"}
+    def review(self, first: str, second: str | None = None, *, use_jev: bool = True) -> dict[str, Any]:
+        if use_jev:
+            if self.settings.mode == "off":
+                return {"ok": False, "error": "Jev requests are disabled while mode is off"}
+            if not self.settings.allow_content_egress:
+                return {"ok": False, "error": "content egress is disabled; set allow_content_egress: true"}
         artifacts = collect_inventory(include_unmanaged=True)
         by_name = {item.name: item for item in artifacts}
         if first not in by_name:
@@ -147,12 +148,14 @@ class CuratorEngine:
         if second:
             if second not in by_name:
                 return {"ok": False, "error": f"unknown skill: {second}"}
+            if not use_jev:
+                return {"ok": False, "error": "pair review requires Jev judgments; set use_jev: true"}
             pair = _pair(by_name[first], by_name[second])
             try:
                 return {"ok": True, "judgment": asdict(self._judge_pair(pair, by_name[pair.a], by_name[pair.b]))}
             except Exception as exc:
                 return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:240]}"}
-        return self.scan(names=[first], use_jev=True)
+        return self.scan(names=[first], use_jev=use_jev)
 
     def build_plans(self, scan: Mapping[str, Any], *, max_plans: int = 5) -> list[MergePlan]:
         from .graph import build_plans
