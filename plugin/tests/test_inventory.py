@@ -136,8 +136,7 @@ class HermesStubs:
     def __init__(self, *, home, curated=(), unmanaged=None, provenance="agent",
                  provenance_error=None, eligible=True, eligibility_error=None,
                  cron_names=(), cron_error=None, disabled_names=(),
-                 disabled_error=None, essential_names=("hermes-agent",),
-                 org_mirror_names=()):
+                 disabled_error=None, essential_names=("hermes-agent",)):
         self.home = Path(home)
         self.curated = [dict(item) for item in curated]
         self.unmanaged = [dict(item) for item in (curated if unmanaged is None else unmanaged)]
@@ -150,7 +149,6 @@ class HermesStubs:
         self.disabled_names = set(disabled_names)
         self.disabled_error = disabled_error
         self.essential_names = frozenset(essential_names)
-        self.org_mirror_names = set(org_mirror_names)
         self.calls: list[str] = []
         self.parse_inputs: list[str] = []
         self._saved: dict[str, Any] = {}
@@ -170,14 +168,9 @@ class HermesStubs:
                 raise self.disabled_error
             return set(self.disabled_names)
 
-        def is_org_mirror_path(path, skills_dir):
-            self.calls.append("is_org_mirror_path")
-            return Path(path).name in self.org_mirror_names
-
         setattr(skill_utils, "iter_skill_index_files", _walk_skill_index_files)
         setattr(skill_utils, "parse_frontmatter", parse_frontmatter)
         setattr(skill_utils, "get_disabled_skill_names", get_disabled_skill_names)
-        setattr(skill_utils, "is_org_mirror_path", is_org_mirror_path)
         setattr(skill_utils, "ESSENTIAL_SKILLS", self.essential_names)
         setattr(agent, "skill_utils", skill_utils)
 
@@ -730,12 +723,18 @@ class ProtectionTests(InventoryTestCase):
                 self.collect(include_unmanaged=True)
 
     def test_org_mirror_skill_flagged(self):
-        self.make_skill("mirrored", "mirrored")
-        with self.hermes(unmanaged=[row("mirrored")],
-                         org_mirror_names={"mirrored"}) as stubs:
+        # The host dropped ``agent.skill_utils.is_org_mirror_path`` in 0.23; the legacy
+        # ``_org/<org>/`` layout is what the plugin recognizes now, without a host import.
+        self.make_skill("_org/acme/mirrored", "mirrored")
+        with self.hermes(unmanaged=[row("mirrored")]):
             artifacts = self.collect(include_unmanaged=True)
         self.assertEqual(artifacts[0].protected_reasons, ("org-mirror",))
-        self.assertIn("is_org_mirror_path", stubs.calls)
+
+    def test_org_dir_name_elsewhere_is_not_a_mirror(self):
+        self.make_skill("notes/_org/mirrored", "mirrored")
+        with self.hermes(unmanaged=[row("mirrored")]):
+            artifacts = self.collect(include_unmanaged=True)
+        self.assertEqual(artifacts[0].protected_reasons, ())
 
     def test_multiple_reasons_merge_sorted(self):
         self.make_skill("multi", "multi")

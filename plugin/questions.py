@@ -27,10 +27,10 @@ from .models import RELATIONS, RelationJudgment, SkillArtifact
 
 CONTRACT_VERSION = "skill-relations-v3"
 
-# Jev 1.13 allows 64k tokens per request, with a stricter 32k-token limit on state plus
-# the longest question. Live, 160k low-entropy chars used 30,880 tokens, while a 158k
-# Markdown/code body exceeded that limit. Keep independent serialized-byte and conservative
-# token ceilings with room for questions. Changing either is a contract change.
+# Jev 1.13 and 1.14 both allow 64k tokens per request, with a stricter 32k-token limit on
+# state plus the longest question. Live, 160k low-entropy chars used 30,880 tokens, while a
+# 158k Markdown/code body exceeded that limit. Keep independent serialized-byte and
+# conservative token ceilings with room for questions. Changing either is a contract change.
 PAIR_STATE_BUDGET_BYTES = 160_000
 PAIR_STATE_TOKEN_BUDGET = 24_000
 STATE_RESERVE_BYTES = 1_000  # names, contract key, scope keys

@@ -11,6 +11,11 @@ from .models import SkillArtifact
 
 
 _SUPPORT_DIRS = frozenset({"references", "templates", "scripts", "assets"})
+# Legacy org-mirror layout: ``<skills>/_org/<org_id>/<skill>/``. Hermes 0.23 dropped the
+# helpers that identified it (``agent.skill_utils.is_org_mirror_path``) while old homes
+# still carry the directory, so the layout is derived locally instead of importing a
+# symbol the host no longer has.
+_ORG_MIRROR_DIR = "_org"
 _TEXT_SUFFIXES = frozenset({"", ".md", ".txt", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".toml", ".sh", ".ps1", ".html", ".css", ".sql"})
 _MAX_TEXT_FILE_BYTES = 256_000
 _MAX_PACKAGE_TEXT_BYTES = 1_000_000
@@ -23,7 +28,6 @@ def collect_inventory(*, skills_root: Path | None = None, include_unmanaged: boo
     from agent.skill_utils import (
         ESSENTIAL_SKILLS,
         get_disabled_skill_names,
-        is_org_mirror_path,
         iter_skill_index_files,
         parse_frontmatter,
     )
@@ -73,7 +77,7 @@ def collect_inventory(*, skills_root: Path | None = None, include_unmanaged: boo
             reasons.add("disabled")
         if name in ESSENTIAL_SKILLS:
             reasons.add("essential")
-        if is_org_mirror_path(package, root):
+        if _is_org_mirror(package, root):
             reasons.add("org-mirror")
         if name in cron_refs:
             reasons.add("cron-referenced")
@@ -196,6 +200,15 @@ def _cron_references() -> set[str]:
         return set(referenced_skill_names())
     except Exception:
         return set()
+
+
+def _is_org_mirror(package: Path, skills_root: Path) -> bool:
+    """True for a legacy org-mirror package (``<skills>/_org/<org>/...``)."""
+    try:
+        parts = package.resolve().relative_to(skills_root.resolve()).parts
+    except (OSError, ValueError):
+        return False
+    return bool(parts) and parts[0] == _ORG_MIRROR_DIR
 
 
 def _safe_int(value: Any) -> int:

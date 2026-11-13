@@ -118,7 +118,9 @@ monkeypatched; nothing in this tree requires a core change.
 | `tools.skill_provenance` | marks apply-mode writes as background-review origin |
 | `tools.write_approval` | refuses apply when staged replay would lose background-review provenance |
 
-Verified against Hermes Agent v0.21.3 using source checkout `522e121e`.
+Verified against Hermes Agent v0.23.1 (source checkout `68471c204c`) and the current
+`b2993293` tree. The `_org/<org>/` mirror layout is detected locally because 0.23 removed
+`agent.skill_utils.is_org_mirror_path`; the other seams in this table still resolve.
 
 ## Modes
 
@@ -314,7 +316,7 @@ credentials, and no core file was changed.
 
 ## Requirements
 
-- Hermes Agent v0.21.2+ (verified against v0.21.3 source checkout `522e121e`)
+- Hermes Agent v0.21.2+ (verified against v0.23.1 source checkout `68471c204c`)
 - Python 3.10+; standard library only — no third-party Python dependencies
 - A Jev credential only if you use TypeSafe or OpenRouter
 
