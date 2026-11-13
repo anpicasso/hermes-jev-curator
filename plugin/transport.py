@@ -283,7 +283,7 @@ def _post(url: str, data: bytes, *, key: str, timeout: float) -> tuple[dict[str,
                 except UnicodeDecodeError as exc:
                     raise _PayloadError("Jev response is not valid UTF-8 JSON") from exc
                 except json.JSONDecodeError as exc:
-                    raise RuntimeError("Jev response is not valid UTF-8 JSON") from exc
+                    raise _PayloadError("Jev response is not valid JSON") from exc
                 if not isinstance(payload, dict):
                     raise _PayloadError("Jev response is not a JSON object")
                 status = int(getattr(response, "status", 200) or 200)

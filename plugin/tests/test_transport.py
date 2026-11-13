@@ -142,13 +142,16 @@ class TransportTests(unittest.TestCase):
             def read(self, _):
                 return self.body
 
-        for body in (b"[]", b"\xff"):
+        for body in (b"[]", b"\xff", b"not json", b'{"answers": '):
             opener = mock.Mock()
             opener.open.return_value = Response(body)
             with self.subTest(body=body), mock.patch("plugin.transport._OPENER", opener):
-                with self.assertRaises(RuntimeError):
+                with self.assertRaises(RuntimeError) as caught:
                     _post("https://judge.example/v1", b"{}", key="", timeout=2)
                 self.assertEqual(opener.open.call_count, 1)
+                if body in (b"not json", b'{"answers": '):
+                    self.assertIn("not valid JSON", str(caught.exception))
+                    self.assertNotIn("UTF-8", str(caught.exception))
 
     def test_preservation_names_are_safe(self):
         instruction = preservation_questions([
