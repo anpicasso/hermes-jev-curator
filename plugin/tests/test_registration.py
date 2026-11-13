@@ -146,7 +146,7 @@ class RegistrationTests(unittest.TestCase):
     def test_manifest_matches_registration(self):
         manifest = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
         self.assertEqual((manifest["name"], manifest["version"], manifest["kind"]),
-                         ("jev-curator", "0.1.0", "standalone"))
+                         ("jev-curator", "0.1.1", "standalone"))
         self.assertEqual(set(manifest["provides_tools"]), {plugin.TOOL_NAME})
         self.assertEqual(set(manifest["provides_hooks"]),
                          {plugin.HOOK_NAME, plugin.GUARD_HOOK_NAME})

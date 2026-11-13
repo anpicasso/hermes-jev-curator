@@ -2,15 +2,16 @@
 
 Visual companion: [interactive architecture diagram](architecture.html).
 
-Design and implementation notes for the 0.1.0 experimental release. Status is marked per
+Design and implementation notes for the 0.1.1 experimental release. Status is marked per
 component: **implemented** (in `plugin/`, unit-tested), **verified** (exercised through an
 installed snapshot), or **not yet done** (no production-library mutation or model-quality
 benchmark).
 
-Verified against Hermes Agent v0.21.3 using source checkout `522e121e`: `hermes plugins doctor` and
+Verified against Hermes Agent v0.23.1: `hermes plugins doctor` and
 `hermes plugins validate` pass, the plugin loads through the real discovery path, and its
-registered surfaces were probed under a scratch `HERMES_HOME`. The installed default-profile
-snapshot was also exercised against TypeSafe with whole, chunked, and locally unavailable pairs.
+registered surfaces were probed under a scratch `HERMES_HOME`. The earlier 0.1.0 installed
+default-profile snapshot was also exercised against TypeSafe with whole, chunked, and locally
+unavailable pairs.
 
 ## Pipeline
 

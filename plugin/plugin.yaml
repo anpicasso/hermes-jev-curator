@@ -1,5 +1,5 @@
 name: jev-curator
-version: 0.1.0
+version: 0.1.1
 description: "Typed Jev relation judgments, a lifecycle-debounced dry refresh, and a local mutation guard for curator-managed skills, with explicitly gated apply mode."
 author: "Angello Picasso"
 license: MIT

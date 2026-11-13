@@ -3,7 +3,7 @@
 **Typed, per-pair skill-relationship judgments for [Hermes Agent](https://github.com/NousResearch/hermes-agent)'s
 background skill curator, served by [TypeSafe's](https://typesafe.ai) Jev decision model.**
 
-> **Experimental release (0.1.0).** The plugin loads and runs against stock Hermes,
+> **Experimental release (0.1.1).** The plugin loads and runs against stock Hermes,
 > passes `hermes plugins doctor` / `validate`, and has been exercised against the live TypeSafe
 > endpoint with whole, chunked, and locally unavailable pairs. The bundled synthetic corpus is
 > still a contract self-check, not a model-quality benchmark. Default mode is read-only
@@ -89,7 +89,7 @@ executes the plugin's terminal-only, snapshot-first archive path for already-pre
 **Scope boundary:** this integration governs the LLM consolidation fork's `skill_manage` calls.
 It does not change Hermes Curator's deterministic age-based stale/archive transitions.
 
-## Status (0.1.0)
+## Status (0.1.1)
 
 | component | state |
 |---|---|
