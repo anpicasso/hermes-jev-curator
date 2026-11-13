@@ -150,7 +150,7 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(set(manifest["provides_tools"]), {plugin.TOOL_NAME})
         self.assertEqual(set(manifest["provides_hooks"]),
                          {plugin.HOOK_NAME, plugin.GUARD_HOOK_NAME})
-        self.assertEqual(manifest["requires_hermes"], ">=0.21.2")
+        self.assertEqual(manifest["requires_hermes"], ">=0.23.1")
         self.assertFalse(manifest.get("capabilities"))  # no privileged capability is used
         settings_keys = {field.name for field in dataclasses.fields(Settings)}
         settings_keys.remove("model")
